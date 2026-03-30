@@ -129,7 +129,6 @@ export default function AppOS() {
   const [budgetOverrides, setBudgetOverrides] = useState<BudgetOverrides>({})
   const [netWorthItems, setNetWorthItems] = useState<ManualNetWorthItem[]>([])
   const [emergencyFundTargetMonths, setEmergencyFundTargetMonths] = useState(6)
-  const [emergencyFundMonthlyExpenses, setEmergencyFundMonthlyExpenses] = useState<number | null>(null)
   const [history, setHistory] = useState<ApiStateResponse['history']>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [imports, setImports] = useState<ApiStateResponse['imports']>([])
@@ -146,28 +145,8 @@ export default function AppOS() {
       setAccounts(data.accounts ?? [])
       setImports(data.imports ?? [])
       setEmergencyFundTargetMonths(data.emergencyFundTargetMonths ?? 6)
-      setEmergencyFundMonthlyExpenses(data.emergencyFundMonthlyExpenses ?? null)
     } catch {
       // silent
-    }
-  }
-
-  const updateEmergencyFundSettings = async (targetMonths: number, monthlyExpenses: number | null) => {
-    if (backendStatus !== 'online') return false
-    try {
-      const data = await api.put<{
-        emergencyFundTargetMonths: number
-        emergencyFundMonthlyExpenses: number | null
-        patrimony: PatrimonySummary
-        suggestions: Suggestion[]
-      }>('/emergency-fund', { targetMonths, monthlyExpenses })
-      setEmergencyFundTargetMonths(data.emergencyFundTargetMonths)
-      setEmergencyFundMonthlyExpenses(data.emergencyFundMonthlyExpenses)
-      setPatrimony(data.patrimony)
-      setSuggestions(data.suggestions)
-      return true
-    } catch {
-      return false
     }
   }
 
@@ -184,7 +163,6 @@ export default function AppOS() {
         setBudgetOverrides(payload.budgetOverrides)
         setNetWorthItems(payload.netWorthItems)
         setEmergencyFundTargetMonths(payload.emergencyFundTargetMonths)
-        setEmergencyFundMonthlyExpenses(payload.emergencyFundMonthlyExpenses ?? null)
         setHistory(payload.history ?? [])
         setAccounts(payload.accounts ?? [])
         setImports(payload.imports ?? [])
@@ -315,8 +293,6 @@ export default function AppOS() {
                 analysis={analysis}
                 backendStatus={backendStatus}
                 emergencyFundTargetMonths={emergencyFundTargetMonths}
-                emergencyFundMonthlyExpenses={emergencyFundMonthlyExpenses}
-                onEmergencyFundSettingsChange={updateEmergencyFundSettings}
                 onSuggestionsRefresh={setSuggestions}
                 onNavigate={setActiveTab}
               />

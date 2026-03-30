@@ -3,8 +3,67 @@ import { Plus, Trash2, Edit2, X, Home, Car, Landmark } from 'lucide-react'
 import type { RealEstate, Vehicle, Debt } from '../types'
 import type { Account } from './AccountsTab'
 import { api } from '../lib/api'
-import TimelineWidget from './TimelineWidget'
 const fmt = (v: number) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v)
+const fmtSigned = (v: number) => `${v >= 0 ? '+' : ''}${fmt(v)}`
+const fmtSignedPercent = (v: number | null) => (v === null ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`)
+
+type PerformancePeriod = '24h' | '7d' | '1m' | '1y' | 'all'
+
+type LiveInvestmentPosition = {
+  accountId: string
+  accountName: string
+  productType: string
+  investmentName: string
+  symbol?: string
+  isin?: string
+  quantity: number
+  buyingPrice: number
+  currentPrice: number
+  referencePrice: number
+  currentValue: number
+  costBasis: number
+  periodChangeAmount: number
+  periodChangePercent: number | null
+  source: 'live' | 'csv' | 'manual'
+}
+
+type LiveInvestmentSnapshot = {
+  period: PerformancePeriod
+  fetchedAt: string
+  totalsByProductType: Record<string, number>
+  totalCurrentValue: number
+  periodChangeAmount: number
+  periodChangePercent: number | null
+  positions: LiveInvestmentPosition[]
+}
+
+const PERIOD_LABELS: Record<PerformancePeriod, string> = {
+  '24h': '24h',
+  '7d': '1s',
+  '1m': '1m',
+  '1y': '1an',
+  all: 'depuis le début',
+}
+
+const PRODUCT_TYPE_LABELS: Record<string, string> = {
+  checking: 'Compte courant',
+  'livret-a': 'Livret A',
+  'livret-jeune': 'Livret Jeune',
+  lep: 'LEP',
+  ldds: 'LDDS',
+  'livret-other': 'Autres livrets',
+  pea: 'PEA',
+  'pea-pme': 'PEA-PME',
+  'assurance-vie': 'Assurance vie',
+  cto: 'CTO',
+  per: 'PER',
+  crypto: 'Crypto',
+  other: 'Autres',
+}
+
+const MARKET_REFRESH_INTERVAL_MS = 60 * 1000
+const LIVRET_TYPES = ['livret-a', 'livret-jeune', 'lep', 'ldds', 'livret-other']
+const MARKET_PRODUCT_TYPES = ['pea', 'pea-pme', 'assurance-vie', 'cto', 'per', 'crypto']
 
 const inputStyle: React.CSSProperties = {
   background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-color)', borderRadius: '8px',
@@ -172,6 +231,12 @@ export default function PatrimoineTab({ financialAccounts, backendStatus }: Prop
   const [showVehModal, setShowVehModal] = useState(false)
   const [editingRE, setEditingRE] = useState<RealEstate | null>(null)
   const [editingVeh, setEditingVeh] = useState<Vehicle | null>(null)
+  const [performancePeriod, setPerformancePeriod] = useState<PerformancePeriod>('all')
+  const [liveInvestments, setLiveInvestments] = useState<LiveInvestmentSnapshot | null>(null)
+  const [loadingInvestments, setLoadingInvestments] = useState(false)
+  const [refreshingInvestments, setRefreshingInvestments] = useState(false)
+  const [refreshingPositionKey, setRefreshingPositionKey] = useState<string | null>(null)
+  const [investmentsError, setInvestmentsError] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -188,13 +253,141 @@ export default function PatrimoineTab({ financialAccounts, backendStatus }: Prop
 
   useEffect(() => { load() }, [])
 
+  useEffect(() => {
+    if (backendStatus !== 'online') {
+      setLiveInvestments(null)
+      setInvestmentsError(null)
+      return
+    }
+
+    let cancelled = false
+
+    const fetchInvestments = async (mode: 'initial' | 'auto') => {
+      if (mode === 'initial') {
+        setLoadingInvestments(true)
+      }
+      try {
+        const payload = await api.get<LiveInvestmentSnapshot>('/markets/investments', {
+          query: { period: performancePeriod },
+          cache: 'no-store',
+        })
+        if (!cancelled) {
+          setLiveInvestments(payload)
+          setInvestmentsError(null)
+        }
+      } catch {
+        if (!cancelled && mode === 'initial') {
+          setInvestmentsError('Impossible de rafraîchir les cours pour le moment.')
+        }
+      } finally {
+        if (!cancelled && mode === 'initial') {
+          setLoadingInvestments(false)
+        }
+      }
+    }
+
+    void fetchInvestments('initial')
+    const intervalId = window.setInterval(() => {
+      void fetchInvestments('auto')
+    }, MARKET_REFRESH_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [backendStatus, performancePeriod])
+
+  const handleManualInvestmentsRefresh = async () => {
+    if (backendStatus !== 'online') return
+
+    setRefreshingInvestments(true)
+    try {
+      const payload = await api.get<LiveInvestmentSnapshot>('/markets/investments', {
+        query: { period: performancePeriod, fresh: 1 },
+        cache: 'no-store',
+      })
+      setLiveInvestments(payload)
+      setInvestmentsError(null)
+    } catch {
+      setInvestmentsError('Impossible de rafraîchir les cours pour le moment.')
+    } finally {
+      setRefreshingInvestments(false)
+    }
+  }
+
+  const handleRefreshPosition = async (positionKey: string) => {
+    if (backendStatus !== 'online') return
+
+    setRefreshingPositionKey(positionKey)
+    try {
+      const payload = await api.get<LiveInvestmentSnapshot>('/markets/investments', {
+        query: { period: performancePeriod, fresh: 1 },
+        cache: 'no-store',
+      })
+      setLiveInvestments(payload)
+      setInvestmentsError(null)
+    } catch {
+      setInvestmentsError('Impossible de rafraîchir la ligne demandée pour le moment.')
+    } finally {
+      setRefreshingPositionKey(null)
+    }
+  }
+
   // ─── Computed totals ─────────────────────────────────────────────────────
-  const financialTotal = financialAccounts.filter(a => a.kind === 'asset').reduce((s, a) => s + (a.balance ?? 0), 0)
+  const marketAccountsTotal = financialAccounts
+    .filter((account) => account.kind === 'asset' && MARKET_PRODUCT_TYPES.includes(account.productType))
+    .reduce((sum, account) => sum + (account.balance ?? 0), 0)
+  const livretAccounts = financialAccounts
+    .filter((account) => account.kind === 'asset' && LIVRET_TYPES.includes(account.productType))
+    .sort((left, right) => (right.balance ?? 0) - (left.balance ?? 0))
+  const livretTotal = livretAccounts.reduce((sum, account) => sum + (account.balance ?? 0), 0)
+  const marketInvestmentsTotal = liveInvestments?.totalCurrentValue ?? marketAccountsTotal
+  const investmentStudioTotal = marketInvestmentsTotal + livretTotal
+  // "Actifs financiers" = Investment Studio scope (market + livrets), matching the Investment Studio total
+  const financialTotal = investmentStudioTotal
   const reTotal = realEstate.reduce((s, r) => s + r.currentValue, 0)
   const vehicleTotal = vehicles.reduce((s, v) => s + v.currentValue, 0)
   const debtTotal = debts.reduce((s, d) => s + d.balance, 0)
   const totalAssets = financialTotal + reTotal + vehicleTotal
   const netWorth = totalAssets - debtTotal
+  const livePositions = liveInvestments?.positions ?? []
+
+  const groupedPositions = Array.from(
+    livePositions.reduce((accumulator, position) => {
+      const isCrypto = position.productType === 'crypto'
+      const key = isCrypto
+        ? 'crypto-pocket::Poche crypto'
+        : `${position.accountId}::${position.accountName}`
+      const group = accumulator.get(key) ?? {
+        key,
+        accountId: isCrypto ? 'crypto-pocket' : position.accountId,
+        accountName: isCrypto ? 'Poche crypto' : position.accountName,
+        productType: isCrypto ? 'crypto' : position.productType,
+        totalValue: 0,
+        periodChangeAmount: 0,
+        positions: [] as LiveInvestmentPosition[],
+      }
+      group.totalValue += position.currentValue
+      group.periodChangeAmount += position.periodChangeAmount
+      group.positions.push(position)
+      accumulator.set(key, group)
+      return accumulator
+    }, new Map<string, {
+      key: string
+      accountId: string
+      accountName: string
+      productType: string
+      totalValue: number
+      periodChangeAmount: number
+      positions: LiveInvestmentPosition[]
+    }>()),
+  ).map(([, group]) => ({
+    ...group,
+    periodChangePercent: group.totalValue - group.periodChangeAmount > 0
+      ? group.periodChangeAmount / (group.totalValue - group.periodChangeAmount)
+      : null,
+    positions: [...group.positions].sort((left, right) => right.currentValue - left.currentValue),
+  })).sort((left, right) => right.totalValue - left.totalValue)
 
   // ─── Real Estate ────────────────────────────────────────────────────────
   const saveRE = async (form: REForm) => {
@@ -265,30 +458,168 @@ export default function PatrimoineTab({ financialAccounts, backendStatus }: Prop
         </div>
       </div>
 
-      {/* Financial Accounts */}
+      {/* Investment Studio */}
       {financialAccounts.filter(a => a.kind === 'asset').length > 0 && (
         <div className="glass-panel" style={{ padding: '24px', marginBottom: '28px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 700, fontSize: '1.05rem' }}>
-              <Landmark size={20} style={{ color: 'var(--accent-teal)' }} /> Comptes financiers
+              <Landmark size={20} style={{ color: 'var(--accent-teal)' }} /> Investment Studio
             </div>
-            <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>{financialAccounts.filter(a => a.kind === 'asset').length} compte(s)</span>
+            <div className="investments-toolbar">
+              <label className="period-select-label">
+                Période de plus-value
+                <select
+                  value={performancePeriod}
+                  onChange={(e) => setPerformancePeriod(e.target.value as PerformancePeriod)}
+                >
+                  <option value="24h">24h</option>
+                  <option value="7d">1s</option>
+                  <option value="1m">1m</option>
+                  <option value="1y">1an</option>
+                  <option value="all">Depuis le début</option>
+                </select>
+              </label>
+              <button
+                className="btn-secondary btn-inline-refresh"
+                onClick={() => void handleManualInvestmentsRefresh()}
+                disabled={backendStatus !== 'online' || refreshingInvestments}
+                type="button"
+              >
+                {refreshingInvestments ? 'Actualisation…' : 'Rafraîchir les cours'}
+              </button>
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {financialAccounts.filter(a => a.kind === 'asset').map(acc => (
-              <div key={acc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+
+          <div className="investment-overview-card">
+            <div className="investment-overview-main">
+              <span className="investment-overview-label">Total Investment Studio</span>
+              <strong>{fmt(investmentStudioTotal)}</strong>
+              <span className="investment-overview-meta">
+                Marché {fmt(marketInvestmentsTotal)} + Livrets {fmt(livretTotal)}
+              </span>
+            </div>
+            <div className="investment-overview-side">
+              <span className="investment-overview-label">Variation marché {PERIOD_LABELS[performancePeriod]}</span>
+              <strong className={(liveInvestments?.periodChangeAmount ?? 0) >= 0 ? 'positive' : 'negative'}>
+                {fmtSigned(liveInvestments?.periodChangeAmount ?? 0)}
+              </strong>
+              <span className="investment-overview-meta">{fmtSignedPercent(liveInvestments?.periodChangePercent ?? null)}</span>
+            </div>
+          </div>
+
+          {loadingInvestments && <span className="market-loading">Actualisation…</span>}
+          {liveInvestments?.fetchedAt && (
+            <div style={{ marginBottom: '12px' }}>
+              <span className="market-updated-at">
+                Mis à jour à {new Date(liveInvestments.fetchedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+          )}
+          {investmentsError && <span className="market-error">{investmentsError}</span>}
+
+          {livretAccounts.length > 0 && (
+            <div className="position-account-group" style={{ marginBottom: '16px' }}>
+              <div className="position-account-group-header">
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{acc.name}</div>
-                  {acc.institution && <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{acc.institution}</div>}
+                  <div className="position-account-group-title">Poche livrets</div>
+                  <div className="position-account-group-meta">{livretAccounts.length} compte(s) sécurisé(s)</div>
                 </div>
-                <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--accent-teal)' }}>{fmt(acc.balance)}</div>
+                <div className="position-account-group-total">{fmt(livretTotal)}</div>
               </div>
-            ))}
-            <div style={{ padding: '10px 16px', background: 'rgba(20,184,166,0.06)', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', fontWeight: 600, marginTop: '4px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Total actifs financiers</span>
-              <span style={{ color: 'var(--accent-teal)' }}>{fmt(financialTotal)}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {livretAccounts.map((account) => (
+                  <div
+                    key={account.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: '1px solid var(--border-color)',
+                      background: 'rgba(255,255,255,0.02)',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{account.name}</div>
+                      <div className="position-subtext">{PRODUCT_TYPE_LABELS[account.productType] ?? account.productType}</div>
+                    </div>
+                    <strong style={{ fontSize: '0.95rem' }}>{fmt(account.balance ?? 0)}</strong>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+
+          {groupedPositions.length > 0 ? (
+            <div className="positions-group-list">
+              {groupedPositions.map((group) => (
+                <div key={group.key} className="position-account-group">
+                  <div className="position-account-group-header">
+                    <div>
+                      <div className="position-account-group-title">{group.accountName}</div>
+                      <div className="position-account-group-meta">{PRODUCT_TYPE_LABELS[group.productType] ?? group.productType} • {group.positions.length} ligne(s)</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="position-account-group-total">{fmt(group.totalValue)}</div>
+                      <div className={`position-account-group-change ${group.periodChangeAmount >= 0 ? 'positive' : 'negative'}`}>
+                        {fmtSigned(group.periodChangeAmount)} ({fmtSignedPercent(group.periodChangePercent)})
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="position-table-header position-row position-row-grouped">
+                    <div>Actif</div>
+                    <div>Qté</div>
+                    <div>Cours</div>
+                    <div>Valorisation</div>
+                    <div>Plus-value</div>
+                    <div>Action</div>
+                  </div>
+                  <div className="positions-list">
+                    {group.positions.map((position) => {
+                      const rowKey = `${position.accountId}-${position.investmentName}`
+                      return (
+                        <div key={rowKey} className="position-row position-row-grouped">
+                          <div className="position-name" title={position.investmentName}>
+                            {position.investmentName}
+                            {position.symbol && <span className="position-subtext">{position.symbol}</span>}
+                            {position.buyingPrice > 0 && (
+                              <span className="position-subtext">PRU {fmt(position.buyingPrice)}</span>
+                            )}
+                          </div>
+                          <div className="position-quantity">{position.quantity.toFixed(4)}</div>
+                          <div className="position-price">{fmt(position.currentPrice)}</div>
+                          <div className="position-value">
+                            {fmt(position.currentValue)}
+                            <span className="position-subtext position-source">{position.source}</span>
+                          </div>
+                          <div className={`position-variation ${position.periodChangeAmount >= 0 ? 'positive' : 'negative'}`}>
+                            {fmtSigned(position.periodChangeAmount)}
+                            <span className="position-subtext">{fmtSignedPercent(position.periodChangePercent)}</span>
+                          </div>
+                          <div>
+                            <button
+                              type="button"
+                              className="btn-secondary btn-inline-refresh"
+                              onClick={() => void handleRefreshPosition(rowKey)}
+                              disabled={backendStatus !== 'online' || refreshingPositionKey === rowKey}
+                            >
+                              {refreshingPositionKey === rowKey ? '…' : '↻'}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>
+              Aucune ligne d'investissement détectée pour le moment.
+            </p>
+          )}
         </div>
       )}
 
@@ -410,13 +741,6 @@ export default function PatrimoineTab({ financialAccounts, backendStatus }: Prop
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Timeline */}
-      {!loading && (
-        <div className="glass-panel" style={{ padding: '28px', marginTop: '8px' }}>
-          <TimelineWidget backendStatus={backendStatus} />
         </div>
       )}
 

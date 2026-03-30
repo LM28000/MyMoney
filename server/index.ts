@@ -143,6 +143,8 @@ type PatrimonySummary = {
   }
   assetsByProductType: { [key: string]: number }
   livretTotal: number
+  totalAssets: number
+  externalPatrimonyTotal: number
   positionDetails: Array<{
     accountName: string
     investmentName: string
@@ -484,6 +486,8 @@ const YAHOO_SYMBOL_CACHE = new Map<string, { symbol: string; name: string; cache
 const YAHOO_SYMBOL_CACHE_TTL = 12 * 60 * 60 * 1000
 const YAHOO_FX_CACHE = new Map<string, { rateToEur: number; cachedAt: number }>()
 const YAHOO_FX_CACHE_TTL = 60 * 60 * 1000
+const YAHOO_ETF_SECTOR_CACHE = new Map<string, { buckets: DiversificationBucket[]; cachedAt: number }>()
+const YAHOO_ETF_SECTOR_CACHE_TTL = 12 * 60 * 60 * 1000
 const CRYPTO_LIVE_CACHE = new Map<string, { currentPrice: number; referencePrice: number | null; symbol?: string; name?: string; cachedAt: number }>()
 const CRYPTO_LIVE_CACHE_TTL = 30 * 60 * 1000
 const COINGECKO_SYMBOL_OVERRIDES: Record<string, string> = {
@@ -1008,7 +1012,41 @@ const inferGeographyLabel = (position: LiveInvestmentPosition) => {
   if (position.productType === 'crypto') return 'Global / Crypto'
 
   const symbol = (position.symbol ?? '').toUpperCase()
+  const isin = (position.isin ?? '').toUpperCase()
   const name = normalizeYahooText(position.investmentName)
+
+  if (/sp\s*500|s\s*p\s*500|nasdaq|usa|us\b|etats unis|united states|msci north america/.test(name)) {
+    return 'États-Unis'
+  }
+  if (/europe|euroland|euro stoxx|stoxx europe|msci europe/.test(name)) {
+    return 'Europe'
+  }
+  if (/japan|japon|nikkei/.test(name)) {
+    return 'Japon'
+  }
+  if (/china|chine|emerging|asie|asia|pacific|world|monde|global|msci world|all country/.test(name)) {
+    return 'Monde / Emergents'
+  }
+
+  if (isin.startsWith('FR')) return 'Europe'
+  if (isin.startsWith('DE')) return 'Allemagne'
+  if (isin.startsWith('GB')) return 'Royaume-Uni'
+  if (isin.startsWith('US')) return 'États-Unis'
+  if (isin.startsWith('JP')) return 'Japon'
+  if (isin.startsWith('LU') || isin.startsWith('IE')) {
+    if (/sp\s*500|s\s*p\s*500|nasdaq|usa|us\b|etats unis|united states|msci north america/.test(name)) {
+      return 'États-Unis'
+    }
+    if (/europe|euroland|euro stoxx|stoxx europe|msci europe/.test(name)) {
+      return 'Europe'
+    }
+    if (/japan|japon|nikkei/.test(name)) {
+      return 'Japon'
+    }
+    if (/emerging|asie|asia|pacific|china|chine|world|monde|global|msci world|all country/.test(name)) {
+      return 'Monde / Emergents'
+    }
+  }
 
   if (symbol.endsWith('.PA') || symbol.endsWith('.FP') || /france|europe|euroland|cac/.test(name)) {
     return 'Europe'
@@ -1027,7 +1065,7 @@ const inferGeographyLabel = (position: LiveInvestmentPosition) => {
     symbol.endsWith('.N') ||
     symbol.endsWith('.O') ||
     symbol.endsWith('.Q') ||
-    /sp500|s&p|nasdaq|usa|us\b|etats unis|united states/.test(name)
+    /sp\s*500|s\s*p\s*500|nasdaq|usa|us\b|etats unis|united states/.test(name)
   ) {
     return 'États-Unis'
   }
@@ -1052,8 +1090,124 @@ const inferSectorLabel = (position: LiveInvestmentPosition) => {
   if (/consumer|retail|luxe|luxury|discretionary|staples/.test(name)) return 'Consommation'
   if (/real estate|reit|immobilier/.test(name)) return 'Immobilier'
   if (/bond|oblig|fixed income|treasury/.test(name)) return 'Obligations'
-  if (/world|global|msci|sp500|s&p/.test(name)) return 'Diversifié global'
+  if (/world|global|msci|sp\s*500|s\s*p\s*500|nasdaq|stoxx|multifactor|all country|acwi|etf/.test(name)) return 'Diversifié global'
   return 'Non déterminé'
+}
+
+const mapYahooSectorKeyToFrench = (key: string): string => {
+  const normalized = normalizeYahooText(key).replace(/\s+/g, '_')
+  switch (normalized) {
+    case 'technology':
+      return 'Technologie'
+    case 'healthcare':
+      return 'Santé'
+    case 'financial_services':
+    case 'financial':
+      return 'Finance'
+    case 'communication_services':
+      return 'Communication'
+    case 'consumer_cyclical':
+      return 'Consommation cyclique'
+    case 'consumer_defensive':
+      return 'Consommation défensive'
+    case 'industrials':
+      return 'Industrie'
+    case 'energy':
+      return 'Énergie'
+    case 'utilities':
+      return 'Services publics'
+    case 'realestate':
+    case 'real_estate':
+      return 'Immobilier'
+    case 'basic_materials':
+      return 'Matériaux'
+    default:
+      return 'Autres secteurs'
+  }
+}
+
+const fetchYahooSectorBucketsForSymbol = async (symbol: string): Promise<DiversificationBucket[]> => {
+  const cacheKey = symbol.toUpperCase()
+  const cached = YAHOO_ETF_SECTOR_CACHE.get(cacheKey)
+  if (cached && Date.now() - cached.cachedAt < YAHOO_ETF_SECTOR_CACHE_TTL) {
+    return cached.buckets
+  }
+
+  let summary: any = null
+  try {
+    summary = await yahooFinance.quoteSummary(cacheKey, { modules: ['topHoldings'] } as any)
+  } catch {
+    summary = null
+  }
+
+  const rows = Array.isArray(summary?.topHoldings?.sectorWeightings)
+    ? summary.topHoldings.sectorWeightings
+    : []
+
+  const aggregate = new Map<string, number>()
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    for (const [rawKey, rawValue] of Object.entries(row as Record<string, unknown>)) {
+      const value = typeof rawValue === 'number' && Number.isFinite(rawValue) ? rawValue : 0
+      if (value <= 0) continue
+      const label = mapYahooSectorKeyToFrench(rawKey)
+      aggregate.set(label, (aggregate.get(label) ?? 0) + value)
+    }
+  }
+
+  const total = [...aggregate.values()].reduce((sum, value) => sum + value, 0)
+  const buckets: DiversificationBucket[] = total > 0
+    ? [...aggregate.entries()]
+        .map(([label, value]) => ({
+          label,
+          value,
+          share: value / total,
+        }))
+        .sort((left, right) => right.value - left.value)
+    : []
+
+  YAHOO_ETF_SECTOR_CACHE.set(cacheKey, { buckets, cachedAt: Date.now() })
+  return buckets
+}
+
+const buildAutoSectorBuckets = async (
+  positions: LiveInvestmentPosition[],
+  totalCurrentValue: number,
+): Promise<DiversificationBucket[]> => {
+  if (positions.length === 0 || totalCurrentValue <= 0) return []
+
+  const aggregate = new Map<string, number>()
+
+  for (const position of positions) {
+    if (position.currentValue <= 0) continue
+
+    const symbol = (position.symbol ?? '').toUpperCase()
+    let hasYahooBreakdown = false
+
+    if (symbol) {
+      const yahooBuckets = await fetchYahooSectorBucketsForSymbol(symbol)
+      if (yahooBuckets.length > 0) {
+        hasYahooBreakdown = true
+        for (const bucket of yahooBuckets) {
+          const weightedValue = position.currentValue * bucket.share
+          aggregate.set(bucket.label, (aggregate.get(bucket.label) ?? 0) + weightedValue)
+        }
+      }
+    }
+
+    if (!hasYahooBreakdown) {
+      const label = inferSectorLabel(position)
+      aggregate.set(label, (aggregate.get(label) ?? 0) + position.currentValue)
+    }
+  }
+
+  return [...aggregate.entries()]
+    .map(([label, value]) => ({
+      label,
+      value,
+      share: value / totalCurrentValue,
+    }))
+    .sort((left, right) => right.value - left.value)
 }
 
 const buildDiversificationBuckets = (
@@ -2097,6 +2251,15 @@ const buildPatrimony = (
           .reduce((sum, item) => sum + item.value, 0)
       : 0)
 
+  const debtRecords = getAllDebts()
+  const debtRecordsTotal = debtRecords.reduce((sum, debt) => sum + debt.balance, 0)
+
+  const realEstateRecords = getAllRealEstate()
+  const realEstateTotal = realEstateRecords.reduce((sum, item) => sum + item.currentValue, 0)
+
+  const vehicleRecords = getAllVehicles()
+  const vehicleTotal = vehicleRecords.reduce((sum, item) => sum + item.currentValue, 0)
+
   // Emergency fund: livret accounts + designated netWorthItems
   const livretAccounts = state.accounts.filter(
     (a) => a.kind === 'asset' && (a.isEligibleEmergencyFund || isLivretType(a.productType)),
@@ -2131,6 +2294,8 @@ const buildPatrimony = (
   const emergencyFundTarget = monthlyExpenses * state.emergencyFundTargetMonths
 
   const totalAssets = bankCash + Object.values(assetsByProductType).reduce((a, b) => a + b, 0)
+  const totalAssetsWithPatrimony = totalAssets + realEstateTotal + vehicleTotal
+  const totalDebts = debts + debtRecordsTotal
 
   // Compute Cashflow Projection
   let pendingAmount = 0
@@ -2155,9 +2320,13 @@ const buildPatrimony = (
 
   return {
     bankCash,
-    externalAssets,
-    debts,
-    netWorth: totalAssets - debts,
+    externalAssets: {
+      ...externalAssets,
+      ...Object.fromEntries(realEstateRecords.map((item) => [item.name, item.currentValue])),
+      ...Object.fromEntries(vehicleRecords.map((item) => [item.name, item.currentValue])),
+    },
+    debts: totalDebts,
+    netWorth: totalAssetsWithPatrimony - totalDebts,
     emergencyFund: {
       current: emergencyFundCurrent,
       target: emergencyFundTarget,
@@ -2169,6 +2338,8 @@ const buildPatrimony = (
     livretTotal,
     positionDetails,
     cashflow,
+    totalAssets: totalAssetsWithPatrimony,
+    externalPatrimonyTotal: realEstateTotal + vehicleTotal,
   }
 }
 
@@ -3375,42 +3546,70 @@ app.get('/api/emergency-fund', (_request, response) => {
 })
 
 // ─── Health Score ─────────────────────────────────────────────────────────────
-app.get('/api/health-score', (_request, response) => {
+app.get('/api/health-score', async (_request, response) => {
   const state = readStore()
   const analysis = buildAnalysis(state)
   const patrimony = buildPatrimony(state, analysis)
-  const goals = getAllGoals()
   const debts = getAllDebts()
-  const snapshots = getDailySnapshots()
 
   const LIVRET_TYPES = ['livret-a', 'livret-jeune', 'lep', 'ldds', 'livret-other']
 
-  // 1. Liquidité — months of emergency fund coverage
+  // 1. Liquidité — progress toward emergency fund target
   const efMonths = patrimony.emergencyFund.months
-  const liquidityScore = Math.min(
-    100,
-    efMonths >= 6 ? 85 + Math.min(15, (efMonths - 6) * 2.5)
-      : efMonths >= 3 ? 55 + (efMonths - 3) * 10
-      : efMonths >= 1 ? 20 + (efMonths - 1) * 17.5
-      : efMonths * 20,
-  )
+  const emergencyCoverageRatio = patrimony.emergencyFund.target > 0
+    ? patrimony.emergencyFund.current / patrimony.emergencyFund.target
+    : 0
+  const liquidityScore = Math.max(0, Math.min(100, Math.round(emergencyCoverageRatio * 100)))
 
-  // 2. Discipline — budget envelope quality
-  let disciplineScore = 65
-  if (analysis) {
-    const currentMonthKey = analysis.months[0]?.key
-    const month = currentMonthKey ? analysis.monthly[currentMonthKey] : null
-    if (month) {
-      const totalVolume = month.income + month.expenses
-      const uncatPct = totalVolume > 0 ? month.uncategorizedAmount / totalVolume : 0
-      const overRatio = month.categories.length > 0
-        ? month.categories.filter((c) => c.status === 'over').length / month.categories.length
-        : 0
-      const gapPenalty = month.budgetGap < 0 && month.expenses > 0
-        ? Math.min(30, (Math.abs(month.budgetGap) / month.expenses) * 100)
-        : 0
-      disciplineScore = Math.max(0, Math.min(100, 100 - uncatPct * 30 - overRatio * 40 - gapPenalty))
-    }
+  const liquidityDetail = {
+    kind: 'liquidity' as const,
+    efCurrent: patrimony.emergencyFund.current,
+    efTarget: patrimony.emergencyFund.target,
+    efMonths: patrimony.emergencyFund.months,
+    efTargetMonths: state.emergencyFundTargetMonths,
+    livretDetails: patrimony.emergencyFund.livretDetails,
+  }
+
+  // 2. Diversification par type de placement (exposition)
+  const placementTotals = new Map<string, number>()
+  const addPlacement = (label: string, value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return
+    placementTotals.set(label, (placementTotals.get(label) ?? 0) + value)
+  }
+
+  const bourseTotal =
+    (patrimony.assetsByProductType['assurance-vie'] ?? 0) +
+    (patrimony.assetsByProductType['pea'] ?? 0) +
+    (patrimony.assetsByProductType['pea-pme'] ?? 0) +
+    (patrimony.assetsByProductType['cto'] ?? 0)
+  addPlacement('Bourse', bourseTotal)
+
+  addPlacement('Crypto', patrimony.assetsByProductType.crypto ?? 0)
+
+  const otherInvestments = Object.entries(patrimony.assetsByProductType)
+    .filter(([key]) => !['assurance-vie', 'pea', 'pea-pme', 'cto', 'crypto'].includes(key) && !LIVRET_TYPES.includes(key))
+    .reduce((sum, [, value]) => sum + value, 0)
+  addPlacement('Autres placements', otherInvestments)
+
+  const placementTotalValue = [...placementTotals.values()].reduce((sum, value) => sum + value, 0)
+  const byPlacementType = placementTotalValue > 0
+    ? [...placementTotals.entries()]
+        .map(([label, value]) => ({ label, value, share: value / placementTotalValue }))
+        .sort((left, right) => right.value - left.value)
+    : []
+
+  const largestPlacement = byPlacementType[0]
+  const largestPlacementShare = largestPlacement?.share ?? 0
+
+  const placementDiversificationScore = placementTotalValue > 0
+    ? Math.max(0, Math.min(100, Math.round(100 - Math.max(0, (largestPlacementShare - 0.4) * 180))))
+    : 0
+
+  const placementDiversificationDetail = {
+    kind: 'placement-diversification' as const,
+    byPlacementType,
+    largestTypeLabel: largestPlacement?.label ?? 'N/A',
+    largestTypeShare: largestPlacementShare,
   }
 
   // 3. Résilience — debt-to-asset ratio
@@ -3420,29 +3619,56 @@ app.get('/api/health-score', (_request, response) => {
   const debtToAsset = allAssets > 0 ? Math.min(1, debtTotal / allAssets) : 0
   const resilienceScore = Math.max(0, Math.min(100, 100 - debtToAsset * 80))
 
-  // 4. Diversification — investment vehicle types
-  const investmentTypes = Object.keys(patrimony.assetsByProductType)
-    .filter((k) => !LIVRET_TYPES.includes(k))
-  const diversificationScore = Math.min(100, investmentTypes.length * 22)
+  // 4. Diversification — use live snapshot to enrich each line with resolved symbols/metadata when possible
+  let diversificationAnalysis: DiversificationAnalysis | null = null
+  let analyzedPositionsCount = 0
+  let marketPositionsForDetail: LiveInvestmentPosition[] = []
+  try {
+    const snapshot = await getCachedLiveInvestmentSnapshot(state, '24h')
+    const marketPositions = snapshot.positions.filter((position) => position.productType !== 'crypto')
+    marketPositionsForDetail = marketPositions
+    analyzedPositionsCount = marketPositions.length
 
-  // 5. Trajectoire — goals progress + net worth trend
-  const activeGoals = goals.filter((g) => !g.isCompleted)
-  const goalProgressScore = activeGoals.length > 0
-    ? (activeGoals.reduce((s, g) => s + (g.targetAmount > 0 ? Math.min(1, g.currentAmount / g.targetAmount) : 0), 0) / activeGoals.length) * 100
-    : 50
-  const recentSnapshots = snapshots.slice(-31)
-  const nwTrend = recentSnapshots.length >= 2
-    ? recentSnapshots[recentSnapshots.length - 1].net_worth - recentSnapshots[0].net_worth
-    : 0
-  const trendBonus = nwTrend > 1000 ? 15 : nwTrend > 0 ? 8 : nwTrend < -1000 ? -15 : nwTrend < 0 ? -8 : 0
-  const trajectoryScore = Math.max(0, Math.min(100, goalProgressScore + trendBonus))
+    if (marketPositions.length > 0) {
+      const totalsByProductType = marketPositions.reduce<Record<string, number>>((accumulator, position) => {
+        accumulator[position.productType] = (accumulator[position.productType] ?? 0) + position.currentValue
+        return accumulator
+      }, {})
+      const totalCurrentValue = marketPositions.reduce((sum, position) => sum + position.currentValue, 0)
+      diversificationAnalysis = buildDiversificationAnalysis(marketPositions, totalsByProductType, totalCurrentValue)
+    } else {
+      diversificationAnalysis = null
+    }
+  } catch {
+    diversificationAnalysis = null
+  }
+
+  // Fallback: if no positions, use vehicle count score
+  const investmentTypes = Object.keys(patrimony.assetsByProductType).filter((k) => !LIVRET_TYPES.includes(k))
+  const finalDiversificationScore = diversificationAnalysis
+    ? diversificationAnalysis.score
+    : Math.min(100, investmentTypes.length * 22)
+
+  const totalMarketValue = marketPositionsForDetail.reduce((sum, position) => sum + position.currentValue, 0)
+  const enrichedSectorBuckets = await buildAutoSectorBuckets(marketPositionsForDetail, totalMarketValue)
+
+  const diversificationDetail = {
+    kind: 'diversification' as const,
+    byGeography: diversificationAnalysis?.byGeography ?? [],
+    bySector: enrichedSectorBuckets.length > 0 ? enrichedSectorBuckets : (diversificationAnalysis?.bySector ?? []),
+    score: finalDiversificationScore,
+    level: diversificationAnalysis?.level ?? 'weak',
+    concentration: diversificationAnalysis?.concentration ?? {
+      largestPositionShare: 0,
+      top3Share: 0,
+    },
+  }
 
   const axes = [
-    { key: 'liquidity', label: 'Liquidité', score: Math.round(liquidityScore), description: `${efMonths.toFixed(1)} mois de réserve couverts` },
-    { key: 'discipline', label: 'Discipline', score: Math.round(disciplineScore), description: 'Maîtrise des enveloppes budgétaires' },
+    { key: 'liquidity', label: 'Liquidité', score: Math.round(liquidityScore), description: `${(emergencyCoverageRatio * 100).toFixed(0)}% de l'objectif de réserve`, detail: liquidityDetail },
+    { key: 'placement-diversification', label: 'Types de placement', score: Math.round(placementDiversificationScore), description: largestPlacement ? `${largestPlacement.label} ${(largestPlacement.share * 100).toFixed(1)}% du total` : 'Aucune exposition détectée', detail: placementDiversificationDetail },
     { key: 'resilience', label: 'Résilience', score: Math.round(resilienceScore), description: `Endettement ${(debtToAsset * 100).toFixed(0)} % des actifs` },
-    { key: 'diversification', label: 'Diversification', score: Math.round(diversificationScore), description: `${investmentTypes.length} type(s) de placement investis` },
-    { key: 'trajectory', label: 'Trajectoire', score: Math.round(trajectoryScore), description: activeGoals.length > 0 ? `${activeGoals.length} objectif(s) en cours` : 'Aucun objectif défini' },
+    { key: 'diversification', label: 'Diversification', score: Math.round(finalDiversificationScore), description: analyzedPositionsCount > 0 ? `${analyzedPositionsCount} ligne(s) analysée(s)` : `${investmentTypes.length} type(s) de placement investis`, detail: diversificationDetail },
   ]
 
   const globalScore = Math.round(axes.reduce((s, a) => s + a.score, 0) / axes.length)
