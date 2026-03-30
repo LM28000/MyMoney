@@ -1,263 +1,131 @@
-# MyMoney Codebase Analysis
+# MyMoney Codebase Analysis (Updated 2026-03-30)
 
-## 1. Card/Metric Display Patterns Found
+## 1. Architecture Snapshot
 
-### Overview: Multiple Reusable Card Patterns Identified
+MyMoney est une application full-stack locale orientée pilotage patrimonial.
 
-#### **DashboardTab.tsx** patterns:
+- Frontend React/TypeScript: dashboard, patrimoine, comptes, budget, objectifs, simulateurs, imports.
+- Backend Express/TypeScript: API métier, calculs budget/patrimoine, intégration IA, valorisation marché.
+- Persistance SQLite: données métier structurées (dettes, objectifs, immobilier, véhicules, overrides, taxes, snapshots).
+- Persistance store JSON: état applicatif enrichi, compatibilité avec historique import initial.
 
-1. **Hero Card** (`hero-card` class)
-   - Location: [DashboardTab.tsx](DashboardTab.tsx#L468)
-   - Used for: Net worth summary
-   - Structure: Label + Strong value + Small metadata
-   - Example: `<div className="hero-card networth-card">`
+## 2. Source Of Truth Métier
 
-2. **Compact Metric Cards** (`compact-metric-card` class)
-   - Location: [DashboardTab.tsx](DashboardTab.tsx#L473-L489)
-   - Used for: Trésorerie, Livrets, Investissements quick stats
-   - Structure: Span label + Strong value + Small metadata
-   - Count: 4 instances in dashboard overview
-   - Pattern: `<span>Label</span> <strong>Value</strong> <small>Metadata</small>`
+- Comptes financiers: `state.accounts` (assets/debts + imports liés).
+- Entités patrimoine hors comptes: tables SQLite dédiées (`real_estate`, `vehicles`, `debts`).
+- Analyse budgétaire: dérivée des transactions importées.
+- Marché live: Yahoo Finance (titres) + CoinGecko (crypto).
 
-3. **History Chart Card** (`HistoryChartCard` component)
-   - Location: [DashboardTab.tsx](DashboardTab.tsx#L153-L175)
-   - Used for: Patrimoine net, Poche investie trends
-   - Structure: Title + Chart SVG + Footer with dates/values
-   - Child variations: `history-card`, `history-card-header`, `history-chart`
+Le calcul patrimoine agrège désormais comptes + immobilier + véhicules + dettes table dédiée.
 
-4. **Investment Overview Card** (`investment-overview-card` class)
-   - Location: [DashboardTab.tsx](DashboardTab.tsx#L714-L728)
-   - Used for: Total valuation + Period performance
-   - Structure: Two-column layout (main/side) with labels
+## 3. Formules Métier Clés
 
-5. **Allocation Item Cards** (`allocation-item` class)
-   - Location: [DashboardTab.tsx](DashboardTab.tsx#L740-L756)
-   - Used for: Investment breakdown by product type
-   - Structure: Label + Value + Share % + Progress bar
-   - Count: Dynamic (one per product type)
-   - Pattern: Repeating card with visual indicator
+Ces formules servent de référence pour maintenir la cohérence UI/API.
 
-6. **Monthly Cards** (`monthly-card` / `premium-month-card` class)
-   - Location: [DashboardTab.tsx](DashboardTab.tsx#L774-L805)
-   - Used for: Monthly Pulse analysis (income/expenses/net)
-   - Structure: Month label + Three-stat grid
-   - Count: 3 cards (latest months)
+- Total Investment Studio = Marché live + Livrets.
+- Actifs financiers (Vue globale) = Total Investment Studio.
+- Actifs totaux = Actifs financiers + Immobilier + Véhicules.
+- Valeur nette = Actifs totaux - Dettes.
 
-7. **Suggestion/Priority Cards** (in AI Brief panel)
-   - Location: [DashboardTab.tsx](DashboardTab.tsx#L594-L606)
-   - Used for: AI recommended actions (also in Monthly panel at L798)
-   - Structure: Title + Description + Actionable advice
-   - Classes: `ai-priority-item`, `suggestion`, `compact-suggestion`
+Notes:
 
-8. **Investment Alert Cards** (`investment-alert` class)
-   - Location: [DashboardTab.tsx](DashboardTab.tsx#L690-L698)
-   - Used for: Risk warnings (emergency fund, concentration, drawdown)
-   - Structure: Title + Description, with severity styling
+- Le compte courant n'entre pas dans Investment Studio.
+- Les valorisations marché live remplacent les montants statiques quand disponibles.
 
-9. **Emergency Fund Widget** (specialized card)
-   - Location: [DashboardTab.tsx](DashboardTab.tsx#L643-L686)
-   - Used for: Emergency fund progress display
-   - Structure: Amounts + Progress bar + Livret list
-   - Unique: Complex multi-element widget
+## 4. Frontend Map (src/components)
 
----
+- `DashboardTab.tsx`: cockpit exécutif, situation globale, allocation, décisions, widgets IA.
+- `PatrimoineTab.tsx`: vue globale patrimoine + Investment Studio (groupes par compte, crypto agrégée).
+- `AccountsTab.tsx`: gestion et visualisation des comptes/imports.
+- `HealthScoreWidget.tsx`: score santé patrimoniale, axes détaillés, popups explicatifs.
+- `ChatbotFloat.tsx`: accès conversationnel rapide via `/api/ai/ask`.
+- `TaxTab.tsx`, `ForecastingTab.tsx`, `SimulatorsTab.tsx`: fiscalité et projections.
 
-#### **AccountsTab.tsx** patterns:
+## 5. Backend Map (server)
 
-1. **Summary Cards** (`summary-cards` / `card` class)
-   - Location: [AccountsTab.tsx](AccountsTab.tsx#L312-L330)
-   - Used for: Total assets, Livrets, Investments summary
-   - Structure: Label + Value + Meta count
-   - Pattern: `<div className="card"><div className="card-label">`, `<div className="card-value">`, `<div className="card-meta">`
+- `index.ts`:
+   - build state + analyses,
+   - calcul patrimonial (`buildPatrimony`),
+   - endpoints IA et marchés,
+   - endpoints de synchronisation/import.
+- `routes/crud.ts`:
+   - CRUD dettes, objectifs, immobilier, véhicules,
+   - tax events,
+   - transaction overrides,
+   - endpoints simulateurs (`/tax/estimate`, `/fire`, `/forecast`).
+- `db.ts`:
+   - accès SQLite,
+   - snapshots journaliers,
+   - lecture/écriture entités métier.
+- `validation/schemas.ts`:
+   - schémas Zod pour validation requêtes.
 
-2. **Account Row Card** (within grouped sections)
-   - Location: [AccountsTab.tsx](AccountsTab.tsx#L400+) (render section)
-   - Used for: Individual account display in collapsible groups
-   - Structure: Product icon + Name + Balance + Actions + Trend
-   - Elements: `account-item`, `account-item-header`, `account-balance-row`
+## 6. API Surface (pratique)
 
----
+Core:
 
-### **Consolidation Opportunities**
+- `GET /api/state`
+- `GET /api/health`
 
-| Pattern | Locations | Consolidation Approach |
-|---------|-----------|------------------------|
-| **Metric Card** | DashboardTab (compact-metric-card), AccountsTab (summary-cards), all panels | Create `<MetricCard label, value, meta, variant>` |
-| **Stat Row** | Monthly cards, allocation items, multiple panels | Create `<StatRow label, value, secondary>` component |
-| **Alert/Priority Card** | Investment alerts, AI priorities, suggestions | Create `<AlertCard title, description, severity>` |
-| **Summary Panel Header** | All premium-panels | Create `<PanelHeader kicker, title, description, actions>` |
-| **Chart Container** | HistoryChartCard, investment overview | Create `<ChartCard title, chartComponent, footer>` |
+Imports:
 
----
+- `GET /api/imports`
+- `POST /api/import`
+- `PATCH /api/imports/:id`
+- `GET /api/investment-imports`
+- `POST /api/investment-import`
+- `PATCH /api/investment-imports/:id`
+- `DELETE /api/investment-imports/:id`
 
-## 2. Chatbot Implementation & AI Prompt System
+Comptes:
 
-### Flow: User Question → AI Response
+- `GET /api/accounts`
+- `POST /api/accounts`
+- `PATCH /api/accounts/:id`
+- `DELETE /api/accounts/:id`
+- `POST /api/accounts/:id/imports`
+- `PATCH /api/accounts/:accountId/imports/:importId`
+- `DELETE /api/accounts/:accountId/imports/:importId`
 
-#### **Frontend Layer** (`ChatbotFloat.tsx`)
+Patrimoine et marchés:
 
-1. **User Input Collection**
-   - Location: [ChatbotFloat.tsx](ChatbotFloat.tsx#L66-L102)
-   - Collects: Query text or quick prompt selection
-   - Sends POST `/api/ai/ask` with:
-     ```json
-     {
-       "query": "user question",
-       "monthKey": "2026-03" (analysis?.months[0]?.key)
-     }
-     ```
+- `GET /api/patrimony/breakdown`
+- `POST /api/wealth/sync`
+- `GET /api/markets/investments`
+- `GET|PUT|DELETE /api/markets/symbol-overrides`
+- `GET /api/timeline`
 
-2. **Quick Prompts Available** (Line 45-49):
-   - "Résumé du mois"
-   - "Anomalies détectées ?"
-   - "Dépenses récurrentes"
-   - "Plus grosse dépense ?"
-   - "Non catégorisé"
+Pilotage & IA:
 
----
+- `PUT /api/budgets`
+- `PUT /api/rules`
+- `POST /api/ai/ask`
+- `POST /api/ai/suggest`
+- `GET|PUT /api/emergency-fund`
+- `GET /api/health-score`
 
-#### **Backend Layer** (`server/index.ts` endpoint)
+CRUD métiers (routeur dédié):
 
-**Endpoint: `POST /api/ai/ask`**
-- Location: [server/index.ts](server/index.ts#L1860-L1892)
+- `debts`, `goals`, `real-estate`, `vehicles`, `tax-events`, `transaction-overrides`
+- `GET /api/tax/estimate`
+- `GET /api/fire`
+- `GET /api/forecast`
 
-**Request Processing:**
-```typescript
-{
-  query: string,        // User question (required)
-  monthKey?: string     // Specific month (defaults to first month)
-}
-```
+## 7. Known Technical Debt
 
-**Data Flow:**
-1. **Fetch stored state** → `readStore()`
-2. **Build analysis** → `buildAnalysis(state)` creates `BudgetAnalysis`
-3. **Validate month exists** → Get `analysis.monthly[monthKey]`
-4. **Two-path logic**:
-   - If `OPENAI_BASE_URL` and `OPENAI_MODEL` configured → Try remote AI first
-   - If remote fails or not configured → Use local fallback
+- Quelques erreurs TypeScript existent en backend dans une section non bloquante pour le build frontend.
+- Bundle frontend principal > 500 kB minifié (warning Vite); optimisation par code splitting à prévoir.
+- Certaines vues mélangent encore logique de calcul et rendu, ce qui limite la réutilisabilité.
 
----
+## 8. Conventions de Maintenance
 
-### **System Prompt Structure** (askRemoteAi)
-
-**Location: [server/index.ts](server/index.ts#L1355-L1405)**
-
-#### System Message (Line 1373-1375):
-```
-"Tu es un assistant financier francophone. Donne des conseils concrets, 
-concis, et actionnables. N'invente aucune donnée absente."
-```
-
-#### User Message Context (Line 1378-1398):
-Passes **structured JSON** containing:
-
-```json
-{
-  "query": "user question",
-  "monthLabel": "mars 2026",
-  "expenses": 2500.50,
-  "income": 3200.00,
-  "budgetTarget": 3000.00,
-  "budgetGap": -499.50,
-  "anomalies": [
-    { "reason": "...", "amount": 100 }  // First 5 anomalies
-  ],
-  "topCategories": [
-    { "name": "Food", "amount": 500, "budget": 450, "balance": -50 }  // First 5
-  ],
-  "recurringExpenses": [
-    { "label": "Netflix", "amount": 15, "frequency": 30 }  // First 6
-  ]
-}
-```
-
----
-
-### **Response Format**
-
-**Location: [server/index.ts](server/index.ts#L1884-L1896)**
-
-Success response:
-```json
-{
-  "mode": "remote" | "local",
-  "title": "Assistant IA",
-  "answer": "markdown formatted response",
-  "transactions": []
-}
-```
-
-Fallback (local) uses `answerBudgetQuestion()` from [src/lib/finance.ts](src/lib/finance.ts)
-
----
-
-## 3. Issues Preventing Chatbot from Receiving Analysis Data
-
-### ✅ **What Works Correctly:**
-
-1. **Month Key Formatting** [ChatbotFloat.tsx L81]
-   - Correctly uses: `analysis?.months[0]?.key`
-   - This gets passed to `/api/ai/ask` as `monthKey`
-
-2. **Request Structure** [ChatbotFloat.tsx L72-79]
-   - Properly sends `monthKey` to backend
-   - Backend correctly retrieves month data
-
-3. **Analysis Availability Check** [ChatbotFloat.tsx L55, 61]
-   - Checks `hasData = Boolean(analysis && analysis.months.length > 0)`
-   - Disables input if no data
-
----
-
-### ⚠️ **Potential Issues Found:**
-
-#### **Issue 1: Month Data Access in Backend** [CRITICAL]
-**Location:** [server/index.ts L1360]
-```typescript
-const month = analysis.monthly[monthKey]
-if (!month) {
-  return null
-}
-```
-
-**Problem:** 
-- Backend looks for `analysis.monthly[monthKey]` (the detailed month object)
-- But if `buildAnalysis()` doesn't properly index by month key, it returns `null`
-- Remote AI call fails silently and falls back to local
-
-**Missing Context Detail:**
-- The month object should contain: `expenses`, `income`, `totalBudgetTarget`, `budgetGap`, `anomalies`, `categories`
-- If any of these are undefined, the JSON stringify creates incomplete context for AI
-- **No validation** that these fields exist before passing to LM Studio
-
----
-
-#### **Issue 2: No Error Logging for Remote AI Failures** [MODERATE]
-**Location:** [server/index.ts L1883-1896]
-```typescript
-try {
-  const answer = await askRemoteAi(...)
-  if (answer) {
-    response.json({ mode: 'remote', ... })
-  } else {
-    // Falls back to local silently
-  }
-} catch {
-  // Falls back to local silently
-}
-```
-
-**Problem:**
-- User sees response but doesn't know if it came from AI or local fallback
-- No indication whether LM Studio is actually being used
-- Response includes `mode: 'remote'` even if the AI returned null
-
----
-
-#### **Issue 3: Incomplete Anomaly Context** [MODERATE]
-**Location:** [server/index.ts L1391, L1384]
-```typescript
+- Toute évolution de formule patrimoniale doit être répercutée dans:
+   - `buildPatrimony` (backend),
+   - `PatrimoineTab` (Vue globale),
+   - `DashboardTab` (cockpit),
+   pour garantir des totaux cohérents.
+- Préférer les montants live pour la poche marché quand la donnée est disponible.
+- Garder les définitions de périmètre explicites dans l'UI (libellés Marché, Livrets, Actifs totaux, Valeur nette).
 anomalies: month.anomalies.slice(0, 5)  // Only first 5
 topCategories: month.categories.slice(0, 5)  // Only first 5
 ```

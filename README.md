@@ -1,152 +1,100 @@
-# MyMoney AI MVP
+# MyMoney
 
-Prototype local de gestion de budget alimenté par des exports bancaires CSV.
+Application locale de pilotage financier personnel (budget + patrimoine), basée sur des imports CSV, une API Express/SQLite et un frontend React.
 
-## Ce que fait déjà le MVP
+## Fonctionnalités actuelles
 
-- importe un export bancaire au format BoursoBank
-- précharge l'export fourni dans le workspace
-- isole les virements pour ne pas biaiser le budget de vie
-- détecte les lignes non catégorisées
-- calcule un tableau de bord mensuel
-- met en avant les catégories et commerçants dominants
-- génère des signaux "assistant IA" à partir des transactions
+- Import CSV d'opérations et de positions d'investissement.
+- Moteur budget: catégorisation, règles, dépenses récurrentes, anomalies, synthèse mensuelle.
+- Cockpit décisionnel: situation, allocation, actions prioritaires, cartes IA.
+- Vue patrimoniale complète: actifs financiers, immobilier, véhicules, dettes.
+- Investment Studio intégré à la Vue globale (Patrimoine) avec:
+  - poche crypto agrégée,
+  - poche livrets,
+  - valorisation live (Yahoo Finance + CoinGecko),
+  - ventilation par compte.
+- Modules additionnels: objectifs, fiscalité, forecast/FIRE, timeline, overrides transaction.
 
-## Ce que fait maintenant la V2 locale
+## Stack
 
-- budgets éditables par catégorie avec sauvegarde locale
-- règles de recatégorisation persistées dans le navigateur
-- assistant de questions/réponses sur les dépenses du mois
-- recherche libre dans les transactions mensuelles
-- détection des dépenses récurrentes
-- détection d'anomalies de montant
-- premier module patrimoine avec actifs et dettes manuels
-- calcul de valeur nette à partir du cash importé et des postes saisis
+- Frontend: React 19 + TypeScript + Vite.
+- Backend: Express + TypeScript (tsx).
+- Persistance: SQLite (better-sqlite3) + store JSON historique.
+- Données marché: yahoo-finance2 + CoinGecko.
 
-## Lancer le projet
+## Démarrage
 
 ```bash
 npm install
+```
+
+### Frontend seul
+
+```bash
 npm run dev
 ```
 
-## Lancer le mode full-stack
+### Backend seul
 
 ```bash
-# 1) copie la conf backend
-cp .env.example .env
+npm run api:dev
+```
 
-# 2) lance API + frontend ensemble
+### Frontend + backend
+
+```bash
 npm run dev:full
 ```
 
-Le frontend utilise automatiquement `/api` et parle au backend Express sur `http://localhost:8787`.
+Par défaut l'API tourne sur le port `8787`.
+Tu peux le changer (ex: `8788`) via la variable d'environnement `API_PORT`.
 
-## Configuration IA (LMStudio / OpenAI-compatible)
+## Variables d'environnement
 
-Le backend expose `/api/ai/ask` et peut appeler n'importe quelle API compatible OpenAI.
+Variables supportées:
 
-Variables `.env`:
+- `API_PORT` (défaut: `8787`)
+- `OPENAI_BASE_URL` (ex: `http://localhost:1234/v1`)
+- `OPENAI_API_KEY` (défaut: `lm-studio`)
+- `OPENAI_MODEL`
+- `CORS_ORIGIN` (défaut: `*`)
+- `LOG_LEVEL` (ex: `info`, `debug`)
+- `MARKET_CACHE_TTL_MS` (défaut: `60000`)
 
-- `OPENAI_BASE_URL` (exemple LMStudio: `http://localhost:1234/v1`)
-- `OPENAI_API_KEY` (pour LMStudio: une valeur arbitraire, ex `lm-studio`)
-- `OPENAI_MODEL` (nom du modèle chargé dans LMStudio)
+Si la config IA n'est pas disponible, les endpoints IA retombent sur un mode local/fallback.
 
-Si ces variables ne sont pas définies, l'assistant retombe automatiquement sur un mode local (heuristique).
+## Formules métier de référence
 
-## Backend API
+Pour éviter les ambiguïtés d'affichage entre écrans:
+
+- Total Investment Studio = Marché live + Livrets.
+- Actifs financiers (Vue globale) = même périmètre que Total Investment Studio.
+- Actifs totaux = Actifs financiers + Immobilier + Véhicules.
+- Valeur nette = Actifs totaux - Dettes.
+
+## API (résumé)
 
 Endpoints principaux:
 
-- `GET /api/state` (état complet persistant)
-- `POST /api/import` (import CSV et persistance)
-- `PUT /api/rules` (règles de recatégorisation)
-- `PUT /api/budgets` (budgets personnalisés)
-- `PUT /api/networth-items` (actifs et dettes manuels)
-- `GET /api/patrimony/summary` (synthèse patrimoine)
-- `POST /api/ai/ask` (question assistant IA)
+- État global: `GET /api/state`, `GET /api/health`
+- Imports budget: `GET /api/imports`, `POST /api/import`, `PATCH /api/imports/:id`
+- Imports investissement: `GET /api/investment-imports`, `POST /api/investment-import`, `PATCH /api/investment-imports/:id`, `DELETE /api/investment-imports/:id`
+- Comptes: `GET /api/accounts`, `POST /api/accounts`, `PATCH /api/accounts/:id`, `DELETE /api/accounts/:id`
+- Import par compte: `POST /api/accounts/:id/imports`, `PATCH /api/accounts/:accountId/imports/:importId`, `DELETE /api/accounts/:accountId/imports/:importId`
+- Budgets/règles: `PUT /api/budgets`, `PUT /api/rules`
+- Patrimoine: `PUT /api/networth-items`, `POST /api/wealth/sync`, `GET /api/patrimony/breakdown`, `GET /api/timeline`
+- Marchés: `GET /api/markets/investments`, `GET|PUT|DELETE /api/markets/symbol-overrides`
+- IA: `POST /api/ai/ask`, `POST /api/ai/suggest`
+- Emergency fund / score: `GET /api/emergency-fund`, `PUT /api/emergency-fund`, `GET /api/health-score`
+- CRUD métiers: dettes, objectifs, immobilier, véhicules, tax events, overrides transaction, simulateurs fiscal/FIRE/forecast.
 
-## Build de production
+## Build production
 
 ```bash
 npm run build
 ```
 
-## Prochaines étapes produit
+## Notes
 
-- règles de recatégorisation persistées
-- budgets éditables par enveloppe
-- moteur de patrimoine multi-comptes
-- vraie couche IA conversationnelle branchée sur les données normalisées
-
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
-
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- Le build Vite peut afficher un warning de taille de chunk; c'est informatif et non bloquant.
+- La documentation détaillée de l'architecture est maintenue dans `CODEBASE_ANALYSIS.md`.
