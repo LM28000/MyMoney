@@ -1,0 +1,4 @@
+﻿dateOp;dateVal;label;category;categoryParent;supplierFound;amount;comment;accountNum;accountLabel;accountbalance
+2026-02-13;2026-02-13;"Virement Depuis Livret Bourso+ | VIR Virement depuis Livret Bourso+";"Virements émis de comptes à comptes";"Mouvements internes débiteurs";"virement depuis livret bourso+";-500,00;;00021153768;"Livret Bourso+";1850.93
+2026-02-10;2026-02-10;"Virement depuis Livret Bourso+ | VIR Virement depuis Livret Bourso+";"Virements émis de comptes à comptes";"Mouvements internes débiteurs";"virement depuis livret bourso+";-300,00;;00021153768;"Livret Bourso+";2350.93
+2026-02-04;2026-02-04;"Virement depuis BoursoBank | VIR Virement depuis BoursoBank";"Virements reçus de comptes à comptes";"Mouvements internes créditeurs";"virement depuis boursobank";800,00;;00021153768;"Livret Bourso+";2650.93

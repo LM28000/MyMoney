@@ -1,0 +1,74 @@
+﻿dateOp;dateVal;label;category;categoryParent;supplierFound;amount;comment;accountNum;accountLabel;accountbalance
+2026-03-30;2026-03-30;"Carte 29/03/26 Le Petit Casino Cb*9583 | CARTE 29/03/26 LE PETIT CASINO   CB*9583";"Non catégorisé";"Non catégorisé";;-2,95;;00040814043;BoursoBank;-76.39
+2026-03-30;2026-03-30;"Carte 27/03/26 Izly Smoney Cb*9583 | CARTE 27/03/26 IZLY SMONEY       CB*9583";"Non catégorisé";"Non catégorisé";;-10,00;;00040814043;BoursoBank;-76.39
+2026-03-30;2026-03-30;"Carte 27/03/26 Nyx*atlanticcafe Cb*9583 | CARTE 27/03/26 NYX*ATLANTICCAFE  CB*9583";"Non catégorisé";"Non catégorisé";;-1,50;;00040814043;BoursoBank;-76.39
+2026-03-30;2026-03-30;"Carte 27/03/26 Nyx*atlanticcafe Cb*9583 | CARTE 27/03/26 NYX*ATLANTICCAFE  CB*9583";"Non catégorisé";"Non catégorisé";;-0,45;;00040814043;BoursoBank;-76.39
+2026-03-30;2026-03-30;"Vir Virement Depuis Boursobank | VIR Virement depuis BoursoBank";"Virements émis";"Virements émis";"virement depuis boursobank";-45,00;;00040814043;BoursoBank;-76.39
+2026-03-30;2026-03-30;"Vir Virement Depuis Boursobank | VIR Virement depuis BoursoBank";"Virements émis";"Virements émis";"virement depuis boursobank";-105,00;;00040814043;BoursoBank;-76.39
+2026-03-30;2026-03-30;"Vir Virement Depuis Boursobank | VIR Virement depuis BoursoBank";"Virements émis de comptes à comptes";"Mouvements internes débiteurs";"virement depuis boursobank";"-1 000,00";;00040814043;BoursoBank;-76.39
+2026-03-30;2026-03-30;"Vir Sepa Devoteam | VIR SEPA DEVOTEAM";"Virements reçus";"Virements reçus";"virement devoteam";"1 101,96";;00040814043;BoursoBank;-76.39
+2026-03-27;2026-03-27;"Uber Eats | CARTE 25/03/26 UBER *EATS CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"uber eats";-16,41;;00040814043;BoursoBank;-13.45
+2026-03-27;2026-03-27;"Atlanticcafe | CARTE 26/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-0,45;;00040814043;BoursoBank;-13.45
+2026-03-26;2026-03-26;"Vir Inst Paul Emile Becquart | VIR INST PAUL EMILE BECQUART";"Virements émis";"Virements émis";"paul emile becquart";-104,00;;00040814043;BoursoBank;3.41
+2026-03-26;2026-03-26;"Casino Shop | CARTE 25/03/26 LE PETIT CASINO CB*9583";Alimentation;"Vie quotidienne";casino;-1,76;;00040814043;BoursoBank;3.41
+2026-03-26;2026-03-26;"Atlanticcafe | CARTE 25/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-1,50;;00040814043;BoursoBank;3.41
+2026-03-26;2026-03-26;"Atlanticcafe | CARTE 25/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-0,45;;00040814043;BoursoBank;3.41
+2026-03-25;2026-03-25;"Vir Inst M Adrien Lusteau | VIR INST M ADRIEN LUSTEAU";"Virements reçus";"Virements reçus";"m adrien lusteau";78,00;;00040814043;BoursoBank;111.12
+2026-03-25;2026-03-25;"Domino's | CARTE 24/03/26 Dominos France CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"dominos france";-8,79;;00040814043;BoursoBank;111.12
+2026-03-25;2026-03-25;"Atlanticcafe | CARTE 24/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-0,45;;00040814043;BoursoBank;111.12
+2026-03-24;2026-03-24;"E.Leclerc | CARTE 23/03/26 ST LECLERC 2344A CB*9583";Alimentation;"Vie quotidienne";leclerc;-47,11;;00040814043;BoursoBank;42.36
+2026-03-24;2026-03-24;"Xpollens | CARTE 23/03/26 IZLY SMONEY CB*9583";"Vie quotidienne";"Vie quotidienne";"izly smoney";-10,00;;00040814043;BoursoBank;42.36
+2026-03-24;2026-03-24;"Uber Eats | CARTE 22/03/26 UBER *EATS CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"uber eats";-18,37;;00040814043;BoursoBank;42.36
+2026-03-24;2026-03-24;"Atlanticcafe | CARTE 23/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-1,50;;00040814043;BoursoBank;42.36
+2026-03-24;2026-03-24;"Atlanticcafe | CARTE 23/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-0,45;;00040814043;BoursoBank;42.36
+2026-03-24;2026-03-24;"Vir Inst M Antoine Mochel | VIR INST M ANTOINE MOCHEL";"Virements reçus";"Virements reçus";"m antoine mochel";78,00;;00040814043;BoursoBank;42.36
+2026-03-23;2026-03-23;"Lmt Shop | CARTE 20/03/26 LMD DEVELOPPEMEN CB*9583";"Hébergement (hôtels, camping…)";"Voyages & Transports";"lmd developpement";-3,50;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"Poste Code Exam | CARTE 20/03/26 POSTE CODE EXAM CB*9583";"Vie Quotidienne - Autres";"Vie quotidienne";"la poste";-30,00;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"La Fabrique | CARTE 20/03/26 LA FABRIQUE CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"la fabrique";-4,50;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"Ta Bar Nak | CARTE 20/03/26 TA BAR NAK CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"ta bar nak";-3,90;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"La Grande Muraille | CARTE 22/03/26 LING LING CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"ling ling";-2,80;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"Casino Shop | CARTE 22/03/26 LE PETIT CASINO CB*9583";Alimentation;"Vie quotidienne";casino;-2,95;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"Billet Spectacle | CARTE 20/03/26 BILLET SPECTACLE CB*9583";"Divertissement - culture (ciné, théâtre, concerts…)";"Loisirs et sorties";"billet spectacle";-5,00;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"The Cornishman | CARTE 20/03/26 THE CORNISHMAN CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"the cornishman";-7,30;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"Ot Nantes Petit P | CARTE 21/03/26 OT NANTES PETIT P CB*9583";"Non catégorisé";"Non catégorisé";"OT NANTES PETIT PORT";-10,20;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"Lmt Shop | CARTE 20/03/26 LMD DEVELOPPEMEN CB*9583";"Hébergement (hôtels, camping…)";"Voyages & Transports";"lmd developpement";-3,50;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"Atlanticcafe | CARTE 20/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-0,45;;00040814043;BoursoBank;41.79
+2026-03-23;2026-03-23;"The Loft | CARTE 21/03/26 LE LOFT CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"le loft";-10,00;;00040814043;BoursoBank;41.79
+2026-03-20;2026-03-20;"Atlanticcafe | CARTE 19/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-0,45;;00040814043;BoursoBank;125.89
+2026-03-20;2026-03-20;"Atlanticcafe | CARTE 19/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-1,20;;00040814043;BoursoBank;125.89
+2026-03-20;2026-03-20;"Atlanticcafe | CARTE 19/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-0,45;;00040814043;BoursoBank;125.89
+2026-03-19;2026-03-19;"Carrefour Express | CARTE 17/03/26 CARREFOUR EXPRES2 CB*9583";Alimentation;"Vie quotidienne";carrefour;-7,57;;00040814043;BoursoBank;127.99
+2026-03-19;2026-03-19;"Atlanticcafe | CARTE 18/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-0,45;;00040814043;BoursoBank;127.99
+2026-03-19;2026-03-19;"Le Royal Café | CARTE 17/03/26 LE ROYAL CAFE CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"le royal cafe";-2,90;;00040814043;BoursoBank;127.99
+2026-03-19;2026-03-19;"Izly | CARTE 18/03/26 IZLY SMONEY CB*9583";"Vie quotidienne";"Vie quotidienne";"izly smoney";-10,00;;00040814043;BoursoBank;127.99
+2026-03-18;2026-03-18;"Atlanticcafe | CARTE 17/03/26 NYX*ATLANTICCAFE CB*9583";"Non catégorisé";"Non catégorisé";NYX*ATLANTICCAFE;-1,20;;00040814043;BoursoBank;148.91
+2026-03-18;2026-03-18;"Vir Virement Depuis Boursobank | VIR Virement depuis BoursoBank";"Virements émis";"Virements émis";"virement depuis boursobank";-3,00;;00040814043;BoursoBank;148.91
+2026-03-18;2026-03-18;"Vir Virement Depuis Boursobank | VIR Virement depuis BoursoBank";"Virements émis";"Virements émis";"virement depuis boursobank";-55,00;;00040814043;BoursoBank;148.91
+2026-03-18;2026-03-18;"Vir Inst M Adrien Lusteau | VIR INST M ADRIEN LUSTEAU";"Virements reçus";"Virements reçus";"m adrien lusteau";50,00;;00040814043;BoursoBank;148.91
+2026-03-16;2026-03-16;"Burger King | CARTE 15/03/26 Burger King CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"burger king";-48,75;;00040814043;BoursoBank;158.11
+2026-03-16;2026-03-16;"Grand Tourmalet | CARTE 15/03/26 LA LAQUETTE CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"la laquette";-18,50;;00040814043;BoursoBank;158.11
+2026-03-16;2026-03-16;"Grand Tourmalet | CARTE 15/03/26 LA LAQUETTE CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"la laquette";-20,00;;00040814043;BoursoBank;158.11
+2026-03-16;2026-03-16;"L'etape Du Berger | CARTE 14/03/26 ETAPE DU BERGER CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"etape du berger";-30,50;;00040814043;BoursoBank;158.11
+2026-03-16;2026-03-16;"Grand Tourmalet | CARTE 14/03/26 GRAND TOURMALET CB*9583";"Club / association (sport, hobby, art…)";"Loisirs et sorties";rict;-96,00;;00040814043;BoursoBank;158.11
+2026-03-16;2026-03-16;"Croc Pizza | CARTE 14/03/26 CAPAMA 2 CB*9583";"Non catégorisé";"Non catégorisé";"CAPAMA          2932596";-15,00;;00040814043;BoursoBank;158.11
+2026-03-16;2026-03-16;"Sport 2000 | CARTE 13/03/26 SPORT 2000 SKI CB*9583";"Equipements sportifs et artistiques";"Vie quotidienne";"sport 2000";-67,74;;00040814043;BoursoBank;158.11
+2026-03-16;2026-03-16;"Lidl | CARTE 13/03/26 LIDL PLAISIR CB*9583";Alimentation;"Vie quotidienne";lidl;-17,10;;00040814043;BoursoBank;158.11
+2026-03-16;2026-03-16;"Burger King | CARTE 13/03/26 Burger King CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"burger king";-29,90;;00040814043;BoursoBank;158.11
+2026-03-12;2026-03-12;"Tiago-washington | CARTE 11/03/26 TIAGO-WASHINGTON CB*9583";"Non catégorisé";"Non catégorisé";TIAGO-WASHINGTON;-10,00;;00040814043;BoursoBank;501.6
+2026-03-12;2026-03-12;"2theloo | CARTE 11/03/26 2THELOO SAINT LAZ CB*9583";"Vie Quotidienne - Autres";"Vie quotidienne";2theloo;-1,00;;00040814043;BoursoBank;501.6
+2026-03-11;2026-03-11;"Cotisation Offre METAL 03/2026 | *FRAIS OFFRE METAL 03/2026";"Frais bancaires et de gestion (dont agios)";"Services financiers & professionnels";"Boursorama Banque";-9,90;;00040814043;BoursoBank;512.6
+2026-03-10;2026-03-10;"Vir Inst Perret Du Cray Louis Marie | VIR INST PERRET DU CRAY LOUIS MARIE";"Virements émis de comptes à comptes";"Mouvements internes débiteurs";"perret du cray louis marie";-6,00;;00040814043;BoursoBank;522.5
+2026-03-10;2026-03-10;"Msp Cot Prevoyance Particulier | PRLV SEPA MSP Cot Prevoyance Particulier";"Journaux, magazines…";"Abonnements & téléphonie";msp;-2,80;;00040814043;BoursoBank;522.5
+2026-03-10;2026-03-10;"MACIF | PRLV SEPA MACIF Loir Bretagne Production";"Assurances (Auto/Moto)";"Auto & Moto";macif;-62,93;;00040814043;BoursoBank;522.5
+2026-03-09;2026-03-09;"Avantages Offre METAL : 02/2026 | AVANTAGES OFFRE METAL : 02/2026";"Remboursement de frais / offres BoursoBank";"Services financiers & professionnels";"avantages offre metal";2,44;;00040814043;BoursoBank;594.23
+2026-03-09;2026-03-09;"The Financier | CARTE 07/03/26 LS The Financier CB*9583";"Non catégorisé";"Non catégorisé";"LS The Financier";-14,00;;00040814043;BoursoBank;594.23
+2026-03-06;2026-03-06;"Tiago-washington | CARTE 05/03/26 TIAGO-WASHINGTON CB*9583";"Non catégorisé";"Non catégorisé";TIAGO-WASHINGTON;-5,00;;00040814043;BoursoBank;605.79
+2026-03-05;2026-03-05;"Carrefour Market | CARTE 04/03/26 CARREFOURMARKET CB*9583";Alimentation;"Vie quotidienne";carrefour;-18,19;;00040814043;BoursoBank;610.79
+2026-03-05;2026-03-05;"Vir Inst Perret Du Cray Louis Marie | VIR INST PERRET DU CRAY LOUIS MARIE";"Virements émis de comptes à comptes";"Mouvements internes débiteurs";"perret du cray louis marie";-6,00;;00040814043;BoursoBank;610.79
+2026-03-05;2026-03-05;"Île-de-France Mobilités | PRLV SEPA Imagine R - COMUTITRES SAS";"Transports quotidiens (métro, bus…)";"Voyages & Transports";"imagine r comutitres";-42,70;;00040814043;BoursoBank;610.79
+2026-03-04;2026-03-04;"Tabac Le Celtique | CARTE 02/03/26 LE CELTIQUE 2 CB*9583";"Restaurants, bars, discothèques…";"Loisirs et sorties";"le celtique";-22,80;;00040814043;BoursoBank;677.68
+2026-03-03;2026-03-03;"Vir Inst Thomas Cabuil | VIR INST THOMAS CABUIL";"Virements émis";"Virements émis";"thomas cabuil";-250,00;;00040814043;BoursoBank;700.48
+2026-03-03;2026-03-03;"Vir Sepa Action Logement Services Pp | VIR SEPA ACTION LOGEMENT SERVICES PP";"Logement - Autres";Logement;"virement action logement services pp";100,00;;00040814043;BoursoBank;700.48
+2026-03-02;2026-03-02;"SNCF | CARTE 27/02/26 SNCF-VOYAGEURS CB*9583";"Transports quotidiens (métro, bus…)";"Voyages & Transports";"ce sncf";-37,60;;00040814043;BoursoBank;850.48
+2026-03-02;2026-03-02;"TotalEnergies | CARTE 27/02/26 TOTAL 4 CB*9583";Carburant;"Auto & Moto";total;-30,00;;00040814043;BoursoBank;850.48
+2026-03-02;2026-03-02;"Airbnb | CARTE 01/03/26 AIRBNB * HM984AQE CB*9583";"Hébergement (hôtels, camping…)";"Voyages & Transports";AIRBNB;-105,51;;00040814043;BoursoBank;850.48
