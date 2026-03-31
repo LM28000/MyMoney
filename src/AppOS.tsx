@@ -317,16 +317,6 @@ export default function AppOS() {
             {activeTab === 'budget' && (
               <BudgetTab
                 analysis={analysis}
-                budgetOverrides={budgetOverrides}
-                onBudgetOverrideChange={(category, value) => {
-                  setBudgetOverrides(prev => {
-                    const next = { ...prev }
-                    if (value === null) delete next[category]
-                    else next[category] = value
-                    return next
-                  })
-                  setTimeout(() => { void refreshState() }, 500)
-                }}
               />
             )}
 

@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import type { BudgetAnalysis } from '../types'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import type { BudgetAnalysis, ActionPlan } from '../types'
 import { api, ApiError } from '../lib/api'
+import ActionPlanWidget from './ActionPlanWidget'
 
 type Props = {
   analysis: BudgetAnalysis | null
@@ -13,6 +16,33 @@ type Message = {
   content: string
   mode?: 'remote' | 'local'
   title?: string
+  actionProposal?: {
+    changes: Array<{ field: string; from: number; to: number }>
+    applying?: boolean
+    applied?: boolean
+  }
+  actionPlan?: ActionPlan
+}
+
+type HealthGoalsActionResponse = {
+  kind: 'health-goals-update'
+  dryRun: boolean
+  hasChanges: boolean
+  message: string
+  changes: Array<{ field: string; from: number; to: number }>
+}
+
+const HEALTH_GOAL_FIELD_LABELS: Record<string, string> = {
+  targetEmergencyFundMonths: 'Liquidité cible (mois)',
+  maxCryptoShareTotal: 'Crypto max (%)',
+  maxSinglePositionShare: 'Position unique max (%)',
+  maxTop3PositionsShare: 'Top 3 max (%)',
+  maxDebtToAssetRatio: 'Dette/actifs max (%)',
+  maxDebtServiceToIncomeRatio: 'Mensualités/revenus max (%)',
+  allocationDriftTolerance: 'Tolérance allocation (pts)',
+  minAssetClassCount: 'Classes d actifs min',
+  minGeoBucketCount: 'Zones géographiques min',
+  minSectorBucketCount: 'Secteurs min',
 }
 
 export default function ChatbotFloat({ analysis, backendStatus }: Props) {
@@ -31,12 +61,70 @@ export default function ChatbotFloat({ analysis, backendStatus }: Props) {
   }, [messages])
 
   const quickPrompts = [
-    'Résumé du mois',
+    'Fais mon diagnostic financier',
+    'Crée un plan d action sur 30 jours',
+    'Quel est mon principal risque actuel ?',
+    'Propose une modification de mes objectifs de santé',
     'Anomalies détectées ?',
-    'Dépenses récurrentes',
-    'Plus grosse dépense ?',
-    'Non catégorisé',
   ]
+
+  const formatProposalSummary = (changes: Array<{ field: string; from: number; to: number }>) => {
+    return changes
+      .map((change) => {
+        const label = HEALTH_GOAL_FIELD_LABELS[change.field] ?? change.field
+        return `• ${label}: ${change.from} → ${change.to}`
+      })
+      .join('\n')
+  }
+
+  const applyHealthGoalProposal = async (
+    messageId: string,
+    changes: Array<{ field: string; from: number; to: number }>,
+  ) => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === messageId && msg.actionProposal
+          ? { ...msg, actionProposal: { ...msg.actionProposal, applying: true } }
+          : msg,
+      ),
+    )
+
+    try {
+      const updates = Object.fromEntries(changes.map((change) => [change.field, change.to]))
+      const result = await api.post<HealthGoalsActionResponse>('/ai/actions/health-goals', {
+        updates,
+        dryRun: false,
+      })
+
+      setMessages((prev) => [
+        ...prev.map((msg) =>
+          msg.id === messageId && msg.actionProposal
+            ? { ...msg, actionProposal: { ...msg.actionProposal, applying: false, applied: true } }
+            : msg,
+        ),
+        {
+          id: `msg-${Date.now()}-apply-success`,
+          role: 'assistant',
+          title: 'Mise à jour appliquée',
+          content: result.message,
+          mode: 'local',
+        },
+      ])
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev.map((msg) =>
+          msg.id === messageId && msg.actionProposal
+            ? { ...msg, actionProposal: { ...msg.actionProposal, applying: false } }
+            : msg,
+        ),
+        {
+          id: `msg-${Date.now()}-apply-error`,
+          role: 'assistant',
+          content: error instanceof ApiError ? error.message : 'Impossible d appliquer les modifications.',
+        },
+      ])
+    }
+  }
 
   const handleSend = async (text?: string) => {
     const query = text || input
@@ -52,21 +140,44 @@ export default function ChatbotFloat({ analysis, backendStatus }: Props) {
     setLoading(true)
 
     try {
-      const result = await api.post<{ mode: string; title: string; answer: string }>('/ai/ask', {
+      const [result, proposal] = await Promise.all([
+        api.post<{ mode: string; title: string; answer: string; actionPlan?: ActionPlan }>('/ai/ask', {
           query,
           monthKey: analysis?.months[0]?.key,
-      })
+        }),
+        api.post<HealthGoalsActionResponse>('/ai/actions/health-goals', {
+          query,
+          dryRun: true,
+        }).catch(() => null),
+      ])
 
-      setMessages((prev) => [
-        ...prev,
+      const nextMessages: Message[] = [
         {
           id: `msg-${Date.now()}-reply`,
           role: 'assistant',
           content: result.answer || 'Impossible de générer une réponse.',
           mode: result.mode as 'remote' | 'local',
           title: result.title,
+          actionPlan: result.actionPlan,
         },
-      ])
+      ]
+
+      if (proposal?.hasChanges && proposal.changes.length > 0) {
+        nextMessages.push({
+          id: `msg-${Date.now()}-proposal`,
+          role: 'assistant',
+          title: 'Proposition de mise à jour',
+          content: `${proposal.message}\n\n${formatProposalSummary(proposal.changes)}`,
+          mode: 'local',
+          actionProposal: {
+            changes: proposal.changes,
+            applying: false,
+            applied: false,
+          },
+        })
+      }
+
+      setMessages((prev) => [...prev, ...nextMessages])
     } catch (error) {
       setMessages((prev) => [
         ...prev,
@@ -143,7 +254,30 @@ export default function ChatbotFloat({ analysis, backendStatus }: Props) {
                       )}
                     </div>
                   )}
-                  <div className="message-content">{msg.content}</div>
+                  <div className="message-content markdown-content">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  </div>
+                  {msg.role === 'assistant' && msg.actionPlan && (
+                    <div style={{ marginTop: '1rem', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
+                      <ActionPlanWidget plan={msg.actionPlan} />
+                    </div>
+                  )}
+                  {msg.role === 'assistant' && msg.actionProposal && !msg.actionProposal.applied && (
+                    <button
+                      type="button"
+                      className="quick-prompt-btn"
+                      style={{ marginTop: '10px' }}
+                      disabled={Boolean(msg.actionProposal.applying) || loading}
+                      onClick={() => void applyHealthGoalProposal(msg.id, msg.actionProposal?.changes ?? [])}
+                    >
+                      {msg.actionProposal.applying ? 'Application…' : 'Appliquer ces paramètres'}
+                    </button>
+                  )}
+                  {msg.role === 'assistant' && msg.actionProposal?.applied && (
+                    <div style={{ marginTop: '8px', fontSize: '0.78rem', color: 'var(--success)' }}>
+                      Modifications appliquées.
+                    </div>
+                  )}
                 </div>
               ))
             )}

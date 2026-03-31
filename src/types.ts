@@ -39,6 +39,19 @@ export type Goal = {
   isCompleted: boolean
 }
 
+export type HealthGoals = {
+  targetEmergencyFundMonths: number
+  maxCryptoShareTotal: number
+  maxSinglePositionShare: number
+  maxTop3PositionsShare: number
+  maxDebtToAssetRatio: number
+  maxDebtServiceToIncomeRatio: number
+  allocationDriftTolerance: number
+  minAssetClassCount: number
+  minGeoBucketCount: number
+  minSectorBucketCount: number
+}
+
 export type RealEstate = {
   id: string
   name: string
@@ -260,6 +273,28 @@ export type MonthlyAnalysis = {
   allTransactions: Transaction[]
   recentTransactions: Transaction[]
   uncategorizedTransactions: Transaction[]
+}
+
+export type ActionTask = {
+  id: string
+  title: string
+  description: string
+  week: number                                    // 1-4 for 30-day plan
+  priority: 'critical' | 'high' | 'medium' | 'low'
+  type: 'budget' | 'investment' | 'debt' | 'savings' | 'categorization' | 'review'
+  estimatedImpact?: number                       // monetary impact or score impact
+  targetDate: string                             // ISO date YYYY-MM-DD
+  completed: boolean
+  actionableSteps?: string[]                     // step-by-step substeps
+}
+
+export type ActionPlan = {
+  durationDays: number
+  startDate: string                              // ISO date
+  endDate: string                                // ISO date
+  tasks: ActionTask[]
+  summary: string                                // one-line summary of the plan
+  estimatedFinancialImpact: number               // total €€ impact
 }
 
 export type BudgetAnalysis = {

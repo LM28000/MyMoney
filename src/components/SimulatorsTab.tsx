@@ -77,22 +77,39 @@ type Props = {
 
 export default function SimulatorsTab({ currentNetWorth = 0 }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('fire')
+  const safeNetWorth = Math.max(0, currentNetWorth)
 
   // ─── FIRE state ─────────────────────────────────────────────────────────
   const [annualExpenses, setAnnualExpenses] = useState(30000)
   const [monthlyContribution, setMonthlyContribution] = useState(1000)
   const [returnRate, setReturnRate] = useState(7)
   const [swr, setSwr] = useState(4)
-  const [portfolioValue, setPortfolioValue] = useState(currentNetWorth)
+  const [portfolioValue, setPortfolioValue] = useState(safeNetWorth)
   const [fireResult, setFireResult] = useState<FIREResult | null>(null)
   const [loadingFire, setLoadingFire] = useState(false)
+  const [fireError, setFireError] = useState<string | null>(null)
 
-  useEffect(() => { setPortfolioValue(currentNetWorth) }, [currentNetWorth])
+  useEffect(() => { setPortfolioValue(safeNetWorth) }, [safeNetWorth])
 
   const computeFIRE = async () => {
     setLoadingFire(true)
-    setFireResult(await api.get<FIREResult>('/fire', { query: { annualExpenses, monthlyContribution, expectedReturnRate: returnRate, safeWithdrawalRate: swr, currentPortfolio: portfolioValue } }))
-    setLoadingFire(false)
+    setFireError(null)
+    try {
+      setFireResult(await api.get<FIREResult>('/fire', {
+        query: {
+          annualExpenses,
+          monthlyContribution,
+          expectedReturnRate: returnRate,
+          safeWithdrawalRate: swr,
+          currentPortfolio: Math.max(0, portfolioValue),
+        },
+      }))
+    } catch {
+      setFireResult(null)
+      setFireError('Impossible de calculer FIRE pour le moment.')
+    } finally {
+      setLoadingFire(false)
+    }
   }
 
   // Auto-compute on param change
@@ -104,13 +121,26 @@ export default function SimulatorsTab({ currentNetWorth = 0 }: Props) {
   // ─── Projection state ────────────────────────────────────────────────────
   const [projYears, setProjYears] = useState(20)
   const [projMonthly, setProjMonthly] = useState(1000)
-  const [projPortfolio, setProjPortfolio] = useState(currentNetWorth)
+  const [projPortfolio, setProjPortfolio] = useState(safeNetWorth)
   const [projResult, setProjResult] = useState<ProjectionResult | null>(null)
+  const [projectionError, setProjectionError] = useState<string | null>(null)
 
-  useEffect(() => { setProjPortfolio(currentNetWorth) }, [currentNetWorth])
+  useEffect(() => { setProjPortfolio(safeNetWorth) }, [safeNetWorth])
 
   const computeProjection = async () => {
-    setProjResult(await api.get<ProjectionResult>('/forecast', { query: { years: projYears, monthlyContribution: projMonthly, currentPortfolio: projPortfolio } }))
+    setProjectionError(null)
+    try {
+      setProjResult(await api.get<ProjectionResult>('/forecast', {
+        query: {
+          years: projYears,
+          monthlyContribution: projMonthly,
+          currentPortfolio: Math.max(0, projPortfolio),
+        },
+      }))
+    } catch {
+      setProjResult(null)
+      setProjectionError('Impossible de calculer la projection pour le moment.')
+    }
   }
 
   useEffect(() => {
@@ -269,6 +299,7 @@ export default function SimulatorsTab({ currentNetWorth = 0 }: Props) {
               </>
             )}
             {loadingFire && <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>Calcul en cours…</div>}
+            {!loadingFire && fireError && <div style={{ textAlign: 'center', padding: '20px', color: 'var(--danger)' }}>{fireError}</div>}
           </div>
         </div>
       )}
@@ -356,6 +387,12 @@ export default function SimulatorsTab({ currentNetWorth = 0 }: Props) {
                 <div className="glass-panel" style={{ padding: '24px', background: immoResult.isAffordable ? 'rgba(16,185,129,0.06)' : 'rgba(239,68,68,0.06)', border: `1px solid ${immoResult.isAffordable ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}` }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '20px' }}>
                     <div>
+
+                    {!projResult && projectionError && (
+                      <div className="glass-panel" style={{ padding: '24px', color: 'var(--danger)' }}>
+                        {projectionError}
+                      </div>
+                    )}
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Mensualité</div>
                       <div style={{ fontSize: '3rem', fontWeight: 900, color: '#fff', lineHeight: 1 }}>{fmt(immoResult.monthlyPayment)}<span style={{ fontSize: '1.2rem', color: 'var(--text-muted)' }}>/mois</span></div>
                     </div>

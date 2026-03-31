@@ -337,13 +337,16 @@ export default function PatrimoineTab({ financialAccounts, backendStatus }: Prop
   const marketAccountsTotal = financialAccounts
     .filter((account) => account.kind === 'asset' && MARKET_PRODUCT_TYPES.includes(account.productType))
     .reduce((sum, account) => sum + (account.balance ?? 0), 0)
+  const checkingAccounts = financialAccounts
+    .filter((account) => account.kind === 'asset' && account.productType === 'checking')
+    .sort((left, right) => (right.balance ?? 0) - (left.balance ?? 0))
+  const checkingTotal = checkingAccounts.reduce((sum, account) => sum + (account.balance ?? 0), 0)
   const livretAccounts = financialAccounts
     .filter((account) => account.kind === 'asset' && LIVRET_TYPES.includes(account.productType))
     .sort((left, right) => (right.balance ?? 0) - (left.balance ?? 0))
   const livretTotal = livretAccounts.reduce((sum, account) => sum + (account.balance ?? 0), 0)
   const marketInvestmentsTotal = liveInvestments?.totalCurrentValue ?? marketAccountsTotal
-  const investmentStudioTotal = marketInvestmentsTotal + livretTotal
-  // "Actifs financiers" = Investment Studio scope (market + livrets), matching the Investment Studio total
+  const investmentStudioTotal = marketInvestmentsTotal + livretTotal + checkingTotal
   const financialTotal = investmentStudioTotal
   const reTotal = realEstate.reduce((s, r) => s + r.currentValue, 0)
   const vehicleTotal = vehicles.reduce((s, v) => s + v.currentValue, 0)
@@ -495,7 +498,7 @@ export default function PatrimoineTab({ financialAccounts, backendStatus }: Prop
               <span className="investment-overview-label">Total Investment Studio</span>
               <strong>{fmt(investmentStudioTotal)}</strong>
               <span className="investment-overview-meta">
-                Marché {fmt(marketInvestmentsTotal)} + Livrets {fmt(livretTotal)}
+                Marché {fmt(marketInvestmentsTotal)} + Livrets {fmt(livretTotal)} + Comptes courants {fmt(checkingTotal)}
               </span>
             </div>
             <div className="investment-overview-side">
@@ -516,6 +519,40 @@ export default function PatrimoineTab({ financialAccounts, backendStatus }: Prop
             </div>
           )}
           {investmentsError && <span className="market-error">{investmentsError}</span>}
+
+          {checkingAccounts.length > 0 && (
+            <div className="position-account-group" style={{ marginBottom: '16px' }}>
+              <div className="position-account-group-header">
+                <div>
+                  <div className="position-account-group-title">Poche comptes courants</div>
+                  <div className="position-account-group-meta">{checkingAccounts.length} compte(s) de trésorerie</div>
+                </div>
+                <div className="position-account-group-total">{fmt(checkingTotal)}</div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {checkingAccounts.map((account) => (
+                  <div
+                    key={account.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: '1px solid var(--border-color)',
+                      background: 'rgba(255,255,255,0.02)',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{account.name}</div>
+                      <div className="position-subtext">{PRODUCT_TYPE_LABELS[account.productType] ?? account.productType}</div>
+                    </div>
+                    <strong style={{ fontSize: '0.95rem' }}>{fmt(account.balance ?? 0)}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {livretAccounts.length > 0 && (
             <div className="position-account-group" style={{ marginBottom: '16px' }}>

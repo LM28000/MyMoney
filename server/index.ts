@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 import cors from 'cors'
@@ -18,6 +19,7 @@ import type {
   BudgetAnalysis,
   BudgetOverrides,
   CategoryRule,
+  HealthGoals,
   ManualNetWorthItem,
   Transaction,
   RecurringExpense,
@@ -117,6 +119,7 @@ export type StoredState = {
   emergencyFundTargetMonths: number
   emergencyFundMonthlyExpenses: number | null
   emergencyFundDesignated: string[]
+  healthGoals: HealthGoals
   marketSymbolOverrides: Record<string, MarketSymbolOverride>
   investmentImports: StoredInvestmentImport[]
   dashboardHistory: DashboardHistoryPoint[]
@@ -292,6 +295,40 @@ type DashboardAlert = {
   description: string
 }
 
+const DEFAULT_HEALTH_GOALS: HealthGoals = {
+  targetEmergencyFundMonths: 6,
+  maxCryptoShareTotal: 10,
+  maxSinglePositionShare: 15,
+  maxTop3PositionsShare: 45,
+  maxDebtToAssetRatio: 35,
+  maxDebtServiceToIncomeRatio: 30,
+  allocationDriftTolerance: 5,
+  minAssetClassCount: 4,
+  minGeoBucketCount: 3,
+  minSectorBucketCount: 5,
+}
+
+const sanitizeHealthGoals = (value?: Partial<HealthGoals> | null): HealthGoals => {
+  const source = value ?? {}
+  const pick = (candidate: unknown, fallback: number, min: number, max: number) => {
+    if (typeof candidate !== 'number' || !Number.isFinite(candidate)) return fallback
+    return Math.max(min, Math.min(max, candidate))
+  }
+
+  return {
+    targetEmergencyFundMonths: Math.round(pick(source.targetEmergencyFundMonths, DEFAULT_HEALTH_GOALS.targetEmergencyFundMonths, 1, 24)),
+    maxCryptoShareTotal: pick(source.maxCryptoShareTotal, DEFAULT_HEALTH_GOALS.maxCryptoShareTotal, 0, 100),
+    maxSinglePositionShare: pick(source.maxSinglePositionShare, DEFAULT_HEALTH_GOALS.maxSinglePositionShare, 1, 100),
+    maxTop3PositionsShare: pick(source.maxTop3PositionsShare, DEFAULT_HEALTH_GOALS.maxTop3PositionsShare, 1, 100),
+    maxDebtToAssetRatio: pick(source.maxDebtToAssetRatio, DEFAULT_HEALTH_GOALS.maxDebtToAssetRatio, 0, 100),
+    maxDebtServiceToIncomeRatio: pick(source.maxDebtServiceToIncomeRatio, DEFAULT_HEALTH_GOALS.maxDebtServiceToIncomeRatio, 0, 100),
+    allocationDriftTolerance: pick(source.allocationDriftTolerance, DEFAULT_HEALTH_GOALS.allocationDriftTolerance, 0, 30),
+    minAssetClassCount: Math.round(pick(source.minAssetClassCount, DEFAULT_HEALTH_GOALS.minAssetClassCount, 1, 12)),
+    minGeoBucketCount: Math.round(pick(source.minGeoBucketCount, DEFAULT_HEALTH_GOALS.minGeoBucketCount, 1, 12)),
+    minSectorBucketCount: Math.round(pick(source.minSectorBucketCount, DEFAULT_HEALTH_GOALS.minSectorBucketCount, 1, 20)),
+  }
+}
+
 const defaultState: StoredState = {
   accounts: [],
   imports: [],
@@ -301,6 +338,7 @@ const defaultState: StoredState = {
   emergencyFundTargetMonths: 6,
   emergencyFundMonthlyExpenses: null,
   emergencyFundDesignated: [],
+  healthGoals: { ...DEFAULT_HEALTH_GOALS },
   marketSymbolOverrides: {},
   investmentImports: [],
   dashboardHistory: [],
@@ -323,8 +361,19 @@ initDB()
 const readStore = (): StoredState => {
   const sqlState = readStoreFromDB()
   if (sqlState) {
+    const migratedGoals = sanitizeHealthGoals((sqlState as Partial<StoredState>).healthGoals)
+    const emergencyFundTargetMonths =
+      typeof (sqlState as Partial<StoredState>).emergencyFundTargetMonths === 'number'
+        ? (sqlState as Partial<StoredState>).emergencyFundTargetMonths as number
+        : migratedGoals.targetEmergencyFundMonths
+
     return {
       ...sqlState,
+      emergencyFundTargetMonths,
+      healthGoals: {
+        ...migratedGoals,
+        targetEmergencyFundMonths: emergencyFundTargetMonths,
+      },
       marketSymbolOverrides: sqlState.marketSymbolOverrides ?? {},
     }
   }
@@ -367,6 +416,13 @@ const readStore = (): StoredState => {
           ? parsed.emergencyFundMonthlyExpenses
           : null,
       emergencyFundDesignated: parsed.emergencyFundDesignated ?? [],
+      healthGoals: {
+        ...sanitizeHealthGoals(parsed.healthGoals),
+        targetEmergencyFundMonths:
+          typeof parsed.emergencyFundTargetMonths === 'number'
+            ? parsed.emergencyFundTargetMonths
+            : sanitizeHealthGoals(parsed.healthGoals).targetEmergencyFundMonths,
+      },
       marketSymbolOverrides:
         parsed.marketSymbolOverrides && typeof parsed.marketSymbolOverrides === 'object'
           ? Object.entries(parsed.marketSymbolOverrides).reduce<Record<string, MarketSymbolOverride>>((acc, [key, value]) => {
@@ -1376,9 +1432,7 @@ const buildLiveInvestmentSnapshot = async (
       continue
     }
 
-    const activeImport = account.csvImports.find(
-      (item) => item.isActive && detectAccountImportKind(item.csvText) === 'positions',
-    )
+    const activeImport = getActiveImportsSortedByTemporalEndDate(account, 'positions')[0]?.imp
     if (!activeImport) continue
 
     const accountPositions = parsePositionsCsv(activeImport.csvText)
@@ -1573,6 +1627,8 @@ const generateDashboardAlerts = (
   const totalAssets = latestHistory?.totalAssets ?? 0
   const investedAssets = latestHistory?.investedAssets ?? 0
   const cryptoExposure = liveSnapshot.totalsByProductType.crypto ?? 0
+  const maxCryptoShare = state.healthGoals.maxCryptoShareTotal / 100
+  const maxSinglePositionShare = state.healthGoals.maxSinglePositionShare / 100
   const largestPosition = [...liveSnapshot.positions].sort((left, right) => right.currentValue - left.currentValue)[0]
 
   if (!patrimony.emergencyFund.isHealthy) {
@@ -1584,21 +1640,21 @@ const generateDashboardAlerts = (
     })
   }
 
-  if (totalAssets > 0 && cryptoExposure / totalAssets >= 0.2) {
+  if (totalAssets > 0 && cryptoExposure / totalAssets >= maxCryptoShare) {
     alerts.push({
       id: 'crypto-concentration',
       severity: 'medium',
       title: 'Exposition crypto élevée',
-      description: `La crypto représente ${(cryptoExposure / totalAssets * 100).toFixed(1)}% du patrimoine total.`,
+      description: `La crypto représente ${(cryptoExposure / totalAssets * 100).toFixed(1)}% (objectif max ${state.healthGoals.maxCryptoShareTotal.toFixed(0)}%).`,
     })
   }
 
-  if (investedAssets > 0 && largestPosition && largestPosition.currentValue / investedAssets >= 0.35) {
+  if (investedAssets > 0 && largestPosition && largestPosition.currentValue / investedAssets >= maxSinglePositionShare) {
     alerts.push({
       id: 'single-position-concentration',
       severity: 'medium',
       title: 'Position très concentrée',
-      description: `${largestPosition.investmentName} pèse ${(largestPosition.currentValue / investedAssets * 100).toFixed(1)}% des investissements.`,
+      description: `${largestPosition.investmentName} pèse ${(largestPosition.currentValue / investedAssets * 100).toFixed(1)}% (max visé ${state.healthGoals.maxSinglePositionShare.toFixed(0)}%).`,
     })
   }
 
@@ -1741,6 +1797,232 @@ function buildPromptKeyFinancialCard(
   }
 }
 
+const priorityOrder: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+}
+
+function generateActionPlan(
+  analysis: BudgetAnalysis | null,
+  patrimony: PatrimonySummary,
+  healthGoals: HealthGoals,
+  liveSnapshot: LiveInvestmentSnapshot | null,
+): ActionPlan {
+  const today = new Date()
+  const startDate = today.toISOString().split('T')[0]
+  const endDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  const tasks: ActionTask[] = []
+  let estimatedFinancialImpact = 0
+
+  // ─── WEEK 1: Priority on categorization & emergency fund ───────────────────
+
+  // Task 1.1: Categorize uncategorized transactions
+  const activeMonth = analysis?.monthly[analysis.months[0]?.key ?? '']
+  const uncategorizedAmount = activeMonth?.uncategorizedAmount ?? 0
+  const uncategorizedCount = activeMonth?.uncategorizedCount ?? 0
+
+  if (uncategorizedCount > 0) {
+    tasks.push({
+      id: `task-w1-categorize`,
+      title: 'Catégorisez les dépenses non catégorisées',
+      description: `Vous avez ${uncategorizedCount} transactions pour €${uncategorizedAmount.toFixed(2)} non classées. Cela bloque une analyse budgétaire précise.`,
+      week: 1,
+      priority: 'critical',
+      type: 'categorization',
+      estimatedImpact: 0,
+      targetDate: new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      completed: false,
+      actionableSteps: [
+        'Ouvrir l\'onglet Imprts et examiner les transactions non catégorisées',
+        'Classer chaque transaction dans la catégorie appropriée',
+        'Utiliser les règles de catégorisation pour automatiser à l\'avenir',
+      ],
+    })
+  }
+
+  // Task 1.2: Emergency fund completion
+  const emergencyGap = Math.max(0, patrimony.emergencyFund.target - patrimony.emergencyFund.current)
+  if (emergencyGap > 0) {
+    const monthlyAllocation = Math.min(100, emergencyGap / 4) // Try to fill in 4 weeks
+    tasks.push({
+      id: `task-w1-emergency`,
+      title: `Complétez votre fonds d'urgence (manque €${emergencyGap.toFixed(2)})`,
+      description: `Vous avez ${patrimony.emergencyFund.current.toFixed(0)} € / ${patrimony.emergencyFund.target.toFixed(0)} € d'épargne de précaution. C'est votre filet de sécurité.`,
+      week: 1,
+      priority: 'critical',
+      type: 'savings',
+      estimatedImpact: monthlyAllocation,
+      targetDate: endDate, // Full plan duration
+      completed: false,
+      actionableSteps: [
+        `Allouer €${monthlyAllocation.toFixed(2)} cette semaine vers le fonds de précaution`,
+        'Compléter progressivement sur les 3 semaines suivantes si possible',
+        'Ne pas investir en risqué tant que ce fonds n\'est pas complet',
+      ],
+    })
+    estimatedFinancialImpact += monthlyAllocation
+  }
+
+  // ─── WEEK 2: Budget optimization & debt analysis ────────────────────────────
+
+  // Task 2.1: Optimize highest spending categories
+  const topCategories = activeMonth?.categories
+    ?.sort((a, b) => b.amount - a.amount)
+    .slice(0, 3) ?? []
+
+  const nonEssentialCategories = topCategories.filter(
+    (cat) => !['Salaire', 'Revenus', 'Prélèvements sociaux', 'Impôts'].includes(cat.name)
+  )
+
+  if (nonEssentialCategories.length > 0) {
+    const savingsTarget = nonEssentialCategories.reduce((sum, cat) => sum + cat.amount * 0.1, 0) // Try 10% reduction
+    tasks.push({
+      id: `task-w2-budget`,
+      title: `Optimiser les dépenses: ${nonEssentialCategories[0]?.name}`,
+      description: `${nonEssentialCategories[0]?.name} consomme €${nonEssentialCategories[0]?.amount.toFixed(2)}/mois. Réduire de 10% = €${(nonEssentialCategories[0]?.amount * 0.1).toFixed(2)} jusqu'à fin d'année.`,
+      week: 2,
+      priority: 'high',
+      type: 'budget',
+      estimatedImpact: savingsTarget,
+      targetDate: new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      completed: false,
+      actionableSteps: [
+        `Identifier les dépenses non essentielles dans ${nonEssentialCategories[0]?.name}`,
+        'Fixer un budget cible réduit de 10% pour la semaine prochaine',
+        'Mettre en place des alertes automatiques pour les dépassements',
+      ],
+    })
+    estimatedFinancialImpact += savingsTarget
+  }
+
+  // Task 2.2: Debt management prioritization
+  if (patrimony.totalDebt > 0) {
+    const debtServiceRatio = patrimony.debtServiceToIncomeRatio ?? 0
+    tasks.push({
+      id: `task-w2-debt`,
+      title: `Analyser et rembourser la dette (€${patrimony.totalDebt.toFixed(0)})`,
+      description: `Vous avez €${patrimony.totalDebt.toFixed(0)} de dettes. Ratio dette/revenus: ${(debtServiceRatio * 100).toFixed(1)}%. Priorité à la réduction structurelle.`,
+      week: 2,
+      priority: 'high',
+      type: 'debt',
+      estimatedImpact: 50, // Minimum accelerated payment
+      targetDate: new Date(today.getTime() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      completed: false,
+      actionableSteps: [
+        'Consulter l\'onglet Dettes pour voir le détail de chaque emprunt',
+        'Identifier la dette avec le taux d\'intérêt le plus élevé',
+        'Négocier un taux fixe ou une restructuration si possible',
+        'Prévoir €50-100 minimum de remboursement accéléré en avril',
+      ],
+    })
+    estimatedFinancialImpact += 50
+  }
+
+  // ─── WEEK 3: Investment rebalancing ──────────────────────────────────────────
+
+  // Task 3.1: Review investment concentration
+  if (liveSnapshot && liveSnapshot.positions.length > 0) {
+    const topPosition = liveSnapshot.positions.sort((a, b) => b.currentValue - a.currentValue)[0]
+    const totalInvested = liveSnapshot.totalCurrentValue
+    const concentrationRatio = topPosition ? topPosition.currentValue / totalInvested : 0
+
+    if (concentrationRatio > 0.25) {
+      tasks.push({
+        id: `task-w3-concentration`,
+        title: `Réduire concentration sur ${topPosition?.investmentName}`,
+        description: `${topPosition?.investmentName} pèse ${(concentrationRatio * 100).toFixed(1)}% (${formatEuroShort(topPosition?.currentValue ?? 0)}). Cible max: 20%.`,
+        week: 3,
+        priority: 'high',
+        type: 'investment',
+        estimatedImpact: 0,
+        targetDate: new Date(today.getTime() + 17 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        completed: false,
+        actionableSteps: [
+          `Vérifier la position actuelle de ${topPosition?.investmentName} dans tous les comptes`,
+          'Réduire progressivement de 5-10% sur les 3 prochaines semaines',
+          'Redéployer vers des ETF plus diversifiés (MSCI World, iShares Core)',
+        ],
+      })
+    }
+
+    // Task 3.2: Crypto allocation check
+    const cryptoAssets = liveSnapshot.positions.filter((p) => p.productType === 'crypto')
+    const cryptoTotal = cryptoAssets.reduce((sum, p) => sum + p.currentValue, 0)
+    const cryptoShare = totalInvested > 0 ? cryptoTotal / totalInvested : 0
+
+    if (cryptoShare > healthGoals.maxCryptoShareTotal / 100) {
+      tasks.push({
+        id: `task-w3-crypto`,
+        title: `Maîtriser allocation crypto (actuellement ${(cryptoShare * 100).toFixed(1)}%)`,
+        description: `Vous avez ${(cryptoShare * 100).toFixed(1)}% en crypto vs objectif de ${healthGoals.maxCryptoShareTotal}%. Risque élevé.`,
+        week: 3,
+        priority: 'high',
+        type: 'investment',
+        estimatedImpact: 0,
+        targetDate: new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        completed: false,
+        actionableSteps: [
+          'Consulter l\'onglet Patrimoines pour voir la détail des crypto',
+          'Identifier les actifs crypto les plus volatiles (ex: altcoins)',
+          `Réduire la part crypto de ${(cryptoShare * 100).toFixed(1)}% à ${healthGoals.maxCryptoShareTotal}%`,
+          'Basculer une partie vers stablecoins ou HODL seulement les positions principales',
+        ],
+      })
+    }
+  }
+
+  // ─── WEEK 4: Monitoring & next month setup ───────────────────────────────────
+
+  // Task 4.1: Health score review
+  tasks.push({
+    id: `task-w4-health-review`,
+    title: 'Vérifier votre score de santé financière',
+    description: 'Évaluer les progrès sur les 4 axes (Liquidité, Types de placement, Résilience, Diversification).',
+    week: 4,
+    priority: 'medium',
+    type: 'review',
+    estimatedImpact: 0,
+    targetDate: new Date(today.getTime() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    completed: false,
+    actionableSteps: [
+      'Ouvrir l\'onglet Objectifs pour voir le détail de chaque axe',
+      'Identifier les axes avec le plus fort déficit',
+      'Valider que les actions de semaines 1-3 améliorent le score',
+    ],
+  })
+
+  // Task 4.2: Plan for May
+  tasks.push({
+    id: `task-w4-planning`,
+    title: 'Préparez le plan d\'action pour mai',
+    description: 'Basé sur les résultats d\'avril, définir les priorités du mois suivant.',
+    week: 4,
+    priority: 'medium',
+    type: 'review',
+    estimatedImpact: 0,
+    targetDate: new Date(today.getTime() + 29 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    completed: false,
+    actionableSteps: [
+      'Faire un bilan des actions menées en avril',
+      'Identifier ce qui a fonctionné et ce qui doit être ajusté',
+      'Fixer les priorités pour mai en fonction des déficits restants',
+    ],
+  })
+
+  const summary = `Plan d'action 30 jours: ${tasks.length} actions pour améliorer votre santé financière (impact estimé: €${estimatedFinancialImpact.toFixed(0)}/mois).`
+
+  return {
+    durationDays: 30,
+    startDate,
+    endDate,
+    tasks: tasks.sort((a, b) => a.week - b.week || (priorityOrder[a.priority] ?? 10) - (priorityOrder[b.priority] ?? 10)),
+    summary,
+    estimatedFinancialImpact,
+  }
+}
+
 function buildLocalFinancialFallback(
   query: string,
   analysis: BudgetAnalysis | null,
@@ -1776,6 +2058,12 @@ function buildLocalFinancialFallback(
     normalizedQuery.includes('crypto') ||
     normalizedQuery.includes('bourse')
 
+  const envelopeIntent =
+    normalizedQuery.includes('pea') ||
+    normalizedQuery.includes('assurance vie') ||
+    normalizedQuery.includes('assurance-vie') ||
+    normalizedQuery.includes('cto')
+
   const patrimonyIntent =
     normalizedQuery.includes('patrimoine') ||
     normalizedQuery.includes('allocation') ||
@@ -1783,6 +2071,50 @@ function buildLocalFinancialFallback(
     normalizedQuery.includes('cash')
 
   if (investmentIntent) {
+    const byEnvelope = {
+      pea: (liveSnapshot?.positions ?? []).filter((position) => position.productType === 'pea').sort((a, b) => b.currentValue - a.currentValue),
+      assuranceVie: (liveSnapshot?.positions ?? []).filter((position) => position.productType === 'assurance-vie').sort((a, b) => b.currentValue - a.currentValue),
+      cto: (liveSnapshot?.positions ?? []).filter((position) => position.productType === 'cto').sort((a, b) => b.currentValue - a.currentValue),
+    }
+    const totalPea = byEnvelope.pea.reduce((sum, position) => sum + position.currentValue, 0)
+    const totalAssuranceVie = byEnvelope.assuranceVie.reduce((sum, position) => sum + position.currentValue, 0)
+    const totalCto = byEnvelope.cto.reduce((sum, position) => sum + position.currentValue, 0)
+
+    if (envelopeIntent && (byEnvelope.pea.length > 0 || byEnvelope.assuranceVie.length > 0 || byEnvelope.cto.length > 0)) {
+      const topPea = byEnvelope.pea.slice(0, 4)
+      const topAssuranceVie = byEnvelope.assuranceVie.slice(0, 4)
+      const topCto = byEnvelope.cto.slice(0, 4)
+
+      return {
+        title: 'Analyse des lignes PEA et assurance-vie',
+        answer: [
+          '## Diagnostic',
+          `Poche investie suivie: ${formatEuroShort(totalInvested)}. PEA: ${formatEuroShort(totalPea)}. Assurance-vie: ${formatEuroShort(totalAssuranceVie)}.${totalCto > 0 ? ` CTO: ${formatEuroShort(totalCto)}.` : ''}`,
+          topPea.length > 0
+            ? `Lignes principales PEA: ${topPea.map((position) => `${position.investmentName} (${formatEuroShort(position.currentValue)})`).join(', ')}.`
+            : 'Aucune ligne PEA détectée dans le snapshot actif.',
+          topAssuranceVie.length > 0
+            ? `Lignes principales assurance-vie: ${topAssuranceVie.map((position) => `${position.investmentName} (${formatEuroShort(position.currentValue)})`).join(', ')}.`
+            : 'Aucune ligne assurance-vie détectée dans le snapshot actif.',
+          '',
+          '## Plan d\'action',
+          emergencyGap > 0
+            ? `- Priorité 1: compléter l'épargne de précaution (manque ${formatEuroShort(emergencyGap)}) avant tout renforcement agressif des lignes.`
+            : '- Priorité 1: maintenir la réserve de sécurité puis investir le surplus progressivement.',
+          topPositions[0]
+            ? `- Priorité 2: surveiller la concentration de ${topPositions[0].investmentName} (${formatEuroShort(topPositions[0].currentValue)}) avant d'ajouter de nouvelles positions.`
+            : '- Priorité 2: définir une allocation cible par enveloppe (PEA / AV / CTO).',
+          '- Priorité 3: privilégier les renforcements sur les lignes déjà suivies avant d\'ouvrir trop de petites positions.',
+          '',
+          '## Points de vigilance',
+          liveSnapshot?.alerts?.length
+            ? `- ${liveSnapshot.alerts[0].description}`
+            : '- Vérifier chaque mois la concentration et la cohérence avec les objectifs de santé financière.',
+        ].join('\n'),
+        transactions: [],
+      }
+    }
+
     const actions: string[] = []
 
     if (emergencyGap > 0) {
@@ -1871,6 +2203,33 @@ const toMonthLabel = (monthKey: string) => {
   const [year, month] = monthKey.split('-').map(Number)
   if (!year || !month) return ''
   return monthFormatter.format(new Date(year, month - 1, 1))
+}
+
+type OperationRecord = {
+  operation: ParsedAccountOperation
+  importUploadedAt: string
+}
+
+const normalizeOperationLabelForKey = (value: string) =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+
+const buildOperationDedupKey = (operation: ParsedAccountOperation) => {
+  const amount = Number.isFinite(operation.amount) ? operation.amount.toFixed(2) : '0.00'
+  const label = normalizeOperationLabelForKey(operation.label)
+  return `${operation.operationDate}|${operation.valueDate}|${amount}|${label}`
+}
+
+const buildStableTransactionId = (accountId: string, dedupKey: string, occurrenceIndex: number) => {
+  const digest = createHash('sha1')
+    .update(`${accountId}|${dedupKey}|${occurrenceIndex}`)
+    .digest('hex')
+    .slice(0, 24)
+  return `tx-${digest}`
 }
 
 const parseOperationsCsvGeneric = (
@@ -2021,10 +2380,62 @@ const parsePositionsImport = (csvText: string) => {
   }
 }
 
-const summarizeAccount = (account: StoredAccount) => {
-  const activeImports = account.csvImports
+const getImportEffectiveEndDate = (imp: StoredImport, importKind: AccountImportKind): string => {
+  if (imp.periodEndDate) return imp.periodEndDate
+
+  if (importKind === 'operations') {
+    return parseOperationsImport(imp.csvText).latestDate ?? imp.uploadedAt.slice(0, 10)
+  }
+
+  return imp.uploadedAt.slice(0, 10)
+}
+
+const getPreferredImportKindForAccount = (account: StoredAccount): AccountImportKind | null => {
+  if (account.productType === 'crypto') return null
+
+  if (
+    account.productType === 'checking' ||
+    account.productType === 'livret-a' ||
+    account.productType === 'livret-jeune' ||
+    account.productType === 'lep' ||
+    account.productType === 'ldds' ||
+    account.productType === 'livret-other'
+  ) {
+    return 'operations'
+  }
+
+  return 'positions'
+}
+
+const getActiveImportsSortedByTemporalEndDate = (
+  account: StoredAccount,
+  kind?: AccountImportKind,
+): Array<{ imp: StoredImport; importKind: AccountImportKind; effectiveEndDate: string }> => {
+  const imports = account.csvImports
     .filter((imp) => imp.isActive)
-    .sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt))
+    .map((imp) => {
+      const importKind = detectAccountImportKind(imp.csvText)
+      return {
+        imp,
+        importKind,
+        effectiveEndDate: getImportEffectiveEndDate(imp, importKind),
+      }
+    })
+
+  const filtered = kind ? imports.filter((row) => row.importKind === kind) : imports
+
+  return filtered.sort((left, right) => {
+    const byEffectiveDate = right.effectiveEndDate.localeCompare(left.effectiveEndDate)
+    if (byEffectiveDate !== 0) return byEffectiveDate
+    return right.imp.uploadedAt.localeCompare(left.imp.uploadedAt)
+  })
+}
+
+const summarizeAccount = (account: StoredAccount) => {
+  const preferredKind = getPreferredImportKindForAccount(account)
+  const activeImports = preferredKind
+    ? getActiveImportsSortedByTemporalEndDate(account, preferredKind)
+    : getActiveImportsSortedByTemporalEndDate(account)
 
   if (account.productType === 'crypto' && account.cryptoHolding?.quantity) {
     const quantity = account.cryptoHolding.quantity
@@ -2054,12 +2465,12 @@ const summarizeAccount = (account: StoredAccount) => {
   }
 
   const latestImport = activeImports[0]
-  const importKind = detectAccountImportKind(latestImport.csvText)
+  const importKind = latestImport.importKind
 
   if (importKind === 'positions') {
-    const latest = parsePositionsImport(latestImport.csvText)
+    const latest = parsePositionsImport(latestImport.imp.csvText)
     const previousImport = activeImports[1]
-    const previous = previousImport ? parsePositionsImport(previousImport.csvText) : null
+    const previous = previousImport ? parsePositionsImport(previousImport.imp.csvText) : null
     const trendAmount = previous
       ? latest.totalCurrentValue - previous.totalCurrentValue
       : latest.totalDayVariation
@@ -2077,7 +2488,7 @@ const summarizeAccount = (account: StoredAccount) => {
   }
 
   if (importKind === 'operations') {
-    const summary = parseOperationsImport(latestImport.csvText)
+    const summary = parseOperationsImport(latestImport.imp.csvText)
     const latestBalance = summary.latestBalance ?? account.manualBalance ?? 0
     const oldestBalance = summary.oldestBalance
     const trendAmount =
@@ -2129,35 +2540,91 @@ const buildAnalysis = (state: StoredState): BudgetAnalysis | null => {
 
   const allTransactions: Transaction[] = []
 
+  const accountDedupMap = new Map<string, {
+    maxOccurrencesByKey: Map<string, number>
+    recordsByKey: Map<string, OperationRecord[]>
+  }>()
+
   activeOpsImports.forEach(({ imp, account }) => {
     const ops = parseOperationsCsvGeneric(imp.csvText, account.name)
+    let dedup = accountDedupMap.get(account.id)
+    if (!dedup) {
+      dedup = {
+        maxOccurrencesByKey: new Map<string, number>(),
+        recordsByKey: new Map<string, OperationRecord[]>(),
+      }
+      accountDedupMap.set(account.id, dedup)
+    }
 
-    ops.forEach((op, index) => {
-      const monthKey = toMonthKey(op.operationDate)
-      const monthLabel = toMonthLabel(monthKey)
-      const lowerLabel = op.label.toLowerCase()
+    const importCounts = new Map<string, number>()
 
-      allTransactions.push({
-        id: `${account.id}-${imp.id}-${op.operationDate}-${index}`,
-        operationDate: op.operationDate,
-        valueDate: op.valueDate,
-        monthKey,
-        monthLabel,
-        label: op.label,
-        category: 'Non catégorisé',
-        categoryParent: 'Non catégorisé',
-        supplier: '',
-        amount: op.amount,
-        direction: op.amount >= 0 ? 'income' : 'expense',
-        comment: '',
-        accountNumber: '',
-        accountLabel: op.accountLabel || account.name,
-        balance: op.balance,
-        isTransfer:
-          lowerLabel.includes('virement') ||
-          lowerLabel.startsWith('vir ') ||
-          lowerLabel.includes('mouvements internes'),
-        isUncategorized: true,
+    ops.forEach((op) => {
+      const dedupKey = buildOperationDedupKey(op)
+      importCounts.set(dedupKey, (importCounts.get(dedupKey) ?? 0) + 1)
+
+      const records = dedup.recordsByKey.get(dedupKey) ?? []
+      records.push({
+        operation: op,
+        importUploadedAt: imp.uploadedAt,
+      })
+      dedup.recordsByKey.set(dedupKey, records)
+    })
+
+    importCounts.forEach((count, dedupKey) => {
+      const currentMax = dedup.maxOccurrencesByKey.get(dedupKey) ?? 0
+      if (count > currentMax) {
+        dedup.maxOccurrencesByKey.set(dedupKey, count)
+      }
+    })
+  })
+
+  accountDedupMap.forEach((dedup, accountId) => {
+    const account = checkingAccounts.find((item) => item.id === accountId)
+    if (!account) return
+
+    dedup.maxOccurrencesByKey.forEach((maxOccurrences, dedupKey) => {
+      const records = dedup.recordsByKey.get(dedupKey) ?? []
+      records.sort((left, right) => {
+        const byOperationDate = right.operation.operationDate.localeCompare(left.operation.operationDate)
+        if (byOperationDate !== 0) return byOperationDate
+
+        const byValueDate = right.operation.valueDate.localeCompare(left.operation.valueDate)
+        if (byValueDate !== 0) return byValueDate
+
+        const byUploadedAt = right.importUploadedAt.localeCompare(left.importUploadedAt)
+        if (byUploadedAt !== 0) return byUploadedAt
+
+        return right.operation.amount - left.operation.amount
+      })
+
+      records.slice(0, maxOccurrences).forEach((record, occurrenceIndex) => {
+        const op = record.operation
+        const monthKey = toMonthKey(op.operationDate)
+        const monthLabel = toMonthLabel(monthKey)
+        const lowerLabel = op.label.toLowerCase()
+
+        allTransactions.push({
+          id: buildStableTransactionId(account.id, dedupKey, occurrenceIndex),
+          operationDate: op.operationDate,
+          valueDate: op.valueDate,
+          monthKey,
+          monthLabel,
+          label: op.label,
+          category: 'Non catégorisé',
+          categoryParent: 'Non catégorisé',
+          supplier: '',
+          amount: op.amount,
+          direction: op.amount >= 0 ? 'income' : 'expense',
+          comment: '',
+          accountNumber: '',
+          accountLabel: op.accountLabel || account.name,
+          balance: op.balance,
+          isTransfer:
+            lowerLabel.includes('virement') ||
+            lowerLabel.startsWith('vir ') ||
+            lowerLabel.includes('mouvements internes'),
+          isUncategorized: true,
+        })
       })
     })
   })
@@ -2212,7 +2679,7 @@ const buildPatrimony = (
 
       // Extract position details for investment accounts
       if ((pt === 'pea' || pt === 'pea-pme' || pt === 'cto' || pt === 'assurance-vie') && summary.importKind === 'positions') {
-        const activeImport = account.csvImports.find((imp) => imp.isActive)
+        const activeImport = getActiveImportsSortedByTemporalEndDate(account, 'positions')[0]?.imp
         if (activeImport) {
           const positions = parsePositionsCsv(activeImport.csvText)
           positions.forEach((pos) => {
@@ -2349,6 +2816,12 @@ const generateSuggestions = (
   patrimony: PatrimonySummary,
 ): FinancialSuggestion[] => {
   const suggestions: FinancialSuggestion[] = []
+  const totalAssets = patrimony.totalAssets > 0 ? patrimony.totalAssets : 0
+  const investedTypesCount = Object.entries(patrimony.assetsByProductType)
+    .filter(([productType, value]) => value > 0 && !['checking', ...LIVRET_TYPES].includes(productType))
+    .length
+  const cryptoExposure = totalAssets > 0 ? (patrimony.assetsByProductType.crypto ?? 0) / totalAssets : 0
+  const debtRatio = totalAssets > 0 ? patrimony.debts / totalAssets : 0
 
   // Emergency fund suggestion
   if (!patrimony.emergencyFund.isHealthy) {
@@ -2372,6 +2845,40 @@ const generateSuggestions = (
     })
   }
 
+  if (cryptoExposure > state.healthGoals.maxCryptoShareTotal / 100) {
+    const overTargetEuros = Math.max(0, (cryptoExposure - state.healthGoals.maxCryptoShareTotal / 100) * totalAssets)
+    suggestions.push({
+      id: 'crypto-over-target',
+      category: 'allocation',
+      priority: 'high',
+      title: 'Crypto au-dessus de votre limite',
+      description: `Exposition actuelle ${(cryptoExposure * 100).toFixed(1)}% (objectif max ${state.healthGoals.maxCryptoShareTotal.toFixed(0)}%).`,
+      actionableAdvice: `Réduire la poche crypto d'environ ${Math.round(overTargetEuros).toLocaleString('fr-FR')}€ ou renforcer les autres poches pour revenir dans la cible.`,
+    })
+  }
+
+  if (debtRatio > state.healthGoals.maxDebtToAssetRatio / 100) {
+    suggestions.push({
+      id: 'debt-ratio-over-target',
+      category: 'debt',
+      priority: 'medium',
+      title: 'Ratio dettes/actifs au-dessus de votre cible',
+      description: `Ratio actuel ${(debtRatio * 100).toFixed(1)}% (objectif max ${state.healthGoals.maxDebtToAssetRatio.toFixed(0)}%).`,
+      actionableAdvice: 'Prioriser le remboursement des dettes les plus coûteuses ou augmenter la base d actifs liquides et investis.',
+    })
+  }
+
+  if (investedTypesCount > 0 && investedTypesCount < state.healthGoals.minAssetClassCount) {
+    suggestions.push({
+      id: 'asset-class-diversification-low',
+      category: 'allocation',
+      priority: 'medium',
+      title: 'Diversification en classes d actifs insuffisante',
+      description: `${investedTypesCount} classe(s) détectée(s) (objectif min ${state.healthGoals.minAssetClassCount}).`,
+      actionableAdvice: 'Ajouter progressivement une ou deux classes d actifs complémentaires pour lisser le risque global.',
+    })
+  }
+
   // Spending anomalies - check first month for anomalies
   if (analysis && analysis.months.length > 0) {
     const firstMonth = analysis.monthly[analysis.months[0]?.key]
@@ -2387,7 +2894,7 @@ const generateSuggestions = (
     }
   }
 
-  return suggestions
+  return suggestions.slice(0, 6)
 }
 
 
@@ -2397,6 +2904,7 @@ const askRemoteAi = async (
   monthKey: string,
   patrimony?: PatrimonySummary,
   liveSnapshot?: LiveInvestmentSnapshot,
+  healthGoals?: HealthGoals,
 ) => {
   if (!OPENAI_BASE_URL || !OPENAI_MODEL) {
     return null
@@ -2408,16 +2916,27 @@ const askRemoteAi = async (
     timeout: 60000, // Some hosted models can take longer than 20s
   })
 
-  const systemPrompt = `Tu es un assistant financier francophone spécialisé dans la gestion de patrimoine et le budget personnel. 
+  const systemPrompt = `Tu es un conseiller financier personnel francophone orienté action. 
 
 DIRECTIVES :
+- Réponds en markdown lisible.
 - Donne des conseils concrets, chiffrés et actionnables.
 - N'invente aucune donnée absente.
 - Si l'utilisateur pose une question sur des données que tu as, réponds directement.
 - Si l'utilisateur pose une question sur des domaines où tu n'as pas de contexte (ex: fiscalité complexe, placements spécialisés), dis "Je n'ai pas assez de contexte pour répondre précisément."
 - Priorise les réponses sur le budget, les dépenses, le patrimoine net, les investissements et la trésorerie.
 - Utilise toujours des unités en euros € avec 2 décimales.
-- Fournis 1-3 actions concrètes à chaque réponse.`
+- Fournis 1-3 actions concrètes à chaque réponse.
+
+FORMAT ATTENDU :
+- "## Diagnostic"
+- "## Plan d'action"
+- "## Points de vigilance"
+- Maximum 180 mots sauf si l'utilisateur demande explicitement du détail.
+
+CONTRAINTE SPECIFIQUE INVESTISSEMENTS :
+- Si des lignes PEA / assurance-vie / CTO sont présentes dans le contexte, base tes recommandations dessus en citant ces lignes.
+- N'utilise pas de conseils d'investissement génériques si des données de lignes sont disponibles.`
 
   const contextData: Record<string, unknown> = { query }
 
@@ -2450,10 +2969,79 @@ DIRECTIVES :
         months: patrimony.emergencyFund.months,
       },
     }
+
+    if (healthGoals) {
+      const totalAssets = patrimony.totalAssets > 0 ? patrimony.totalAssets : 0
+      const cryptoShare = totalAssets > 0 ? ((patrimony.assetsByProductType.crypto ?? 0) / totalAssets) * 100 : 0
+      const debtRatio = totalAssets > 0 ? (patrimony.debts / totalAssets) * 100 : 0
+      const investedTypeCount = Object.entries(patrimony.assetsByProductType)
+        .filter(([type, value]) => value > 0 && !['checking', ...LIVRET_TYPES].includes(type))
+        .length
+      contextData.healthGoals = healthGoals
+      contextData.healthGaps = {
+        emergencyFundGap: Math.max(0, patrimony.emergencyFund.target - patrimony.emergencyFund.current),
+        cryptoShare,
+        debtRatio,
+        investedTypeCount,
+      }
+    }
   }
 
   // Add investment snapshot context if available
   if (liveSnapshot) {
+    const productTypeLabel = (productType: string) => {
+      switch (productType) {
+        case 'pea': return 'PEA'
+        case 'assurance-vie': return 'Assurance vie'
+        case 'cto': return 'CTO'
+        case 'pea-pme': return 'PEA-PME'
+        case 'per': return 'PER'
+        case 'crypto': return 'Crypto'
+        default: return productType
+      }
+    }
+
+    const topLines = liveSnapshot.positions
+      .slice()
+      .sort((left, right) => right.currentValue - left.currentValue)
+      .slice(0, 12)
+      .map((position) => ({
+        accountName: position.accountName,
+        envelope: productTypeLabel(position.productType),
+        name: position.investmentName,
+        symbol: position.symbol ?? position.isin ?? null,
+        value: position.currentValue,
+        weightInInvested: liveSnapshot.totalCurrentValue > 0
+          ? position.currentValue / liveSnapshot.totalCurrentValue
+          : 0,
+        periodChangeAmount: position.periodChangeAmount,
+        periodChangePercent: position.periodChangePercent,
+      }))
+
+    const linesByEnvelope = ['pea', 'assurance-vie', 'cto', 'pea-pme', 'per', 'crypto']
+      .map((envelope) => {
+        const lines = liveSnapshot.positions
+          .filter((position) => position.productType === envelope)
+          .sort((left, right) => right.currentValue - left.currentValue)
+          .slice(0, 5)
+          .map((position) => ({
+            accountName: position.accountName,
+            name: position.investmentName,
+            value: position.currentValue,
+            weightInEnvelope: (liveSnapshot.totalsByProductType[envelope] ?? 0) > 0
+              ? position.currentValue / (liveSnapshot.totalsByProductType[envelope] ?? 1)
+              : 0,
+            periodChangePercent: position.periodChangePercent,
+          }))
+
+        return {
+          envelope: productTypeLabel(envelope),
+          totalValue: liveSnapshot.totalsByProductType[envelope] ?? 0,
+          lines,
+        }
+      })
+      .filter((entry) => entry.totalValue > 0)
+
     contextData.investments = {
       total: liveSnapshot.totalCurrentValue,
       periodChange: liveSnapshot.periodChangeAmount,
@@ -2463,7 +3051,25 @@ DIRECTIVES :
         value: p.currentValue,
         account: p.accountName,
       })),
+      topLines,
+      linesByEnvelope,
       alerts: liveSnapshot.alerts.slice(0, 2),
+    }
+  } else if (patrimony?.positionDetails?.length) {
+    contextData.investments = {
+      source: 'patrimony-position-details',
+      topLines: patrimony.positionDetails
+        .slice()
+        .sort((left, right) => right.currentValue - left.currentValue)
+        .slice(0, 10)
+        .map((position) => ({
+          accountName: position.accountName,
+          name: position.investmentName,
+          value: position.currentValue,
+          quantity: position.quantity,
+          lastPrice: position.lastPrice,
+          variation: position.variation,
+        })),
     }
   }
 
@@ -2501,6 +3107,84 @@ DIRECTIVES :
   }
 
   return null
+}
+
+const ensureAdvisorMarkdown = (answer: string) => {
+  const trimmed = answer.trim()
+  if (!trimmed) return trimmed
+  const hasDiagnostic = /##\s*Diagnostic/i.test(trimmed)
+  const hasPlan = /##\s*Plan/i.test(trimmed)
+  const hasVigilance = /##\s*Points\s+de\s+vigilance/i.test(trimmed)
+  if (hasDiagnostic && hasPlan && hasVigilance) {
+    return trimmed
+  }
+
+  return [
+    '## Diagnostic',
+    trimmed,
+    '',
+    '## Plan d\'action',
+    '- Prioriser une action à fort impact ce mois-ci.',
+    '- Mettre en place un suivi hebdomadaire des écarts.',
+    '',
+    '## Points de vigilance',
+    '- Vérifier régulièrement la cohérence avec les objectifs de santé financière.',
+  ].join('\n')
+}
+
+const isGenericInvestmentRemoteAnswer = (answer: string) => {
+  const normalized = normalizeAssistantQuery(answer)
+  return (
+    normalized.includes('je ne dispose pas') ||
+    normalized.includes('donnees specifiques') ||
+    normalized.includes('hypothetique') ||
+    normalized.includes('basee sur les chiffres disponibles')
+  )
+}
+
+const toNumberFromString = (value: string) => {
+  const normalized = value.replace(',', '.').trim()
+  const parsed = Number.parseFloat(normalized)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const extractGoalNumber = (normalizedQuery: string, aliases: string[]) => {
+  for (const alias of aliases) {
+    const pattern = new RegExp(`${alias}[^0-9]{0,25}([0-9]{1,3}(?:[.,][0-9]+)?)`)
+    const match = normalizedQuery.match(pattern)
+    if (!match?.[1]) continue
+    const parsed = toNumberFromString(match[1])
+    if (parsed !== null) return parsed
+  }
+  return null
+}
+
+const extractHealthGoalsUpdatesFromQuery = (query: string): Partial<HealthGoals> => {
+  const normalizedQuery = normalizeAssistantQuery(query)
+  const updates: Partial<HealthGoals> = {}
+
+  const assignIfDetected = (
+    field: keyof HealthGoals,
+    aliases: string[],
+    round = true,
+  ) => {
+    const value = extractGoalNumber(normalizedQuery, aliases)
+    if (value === null) return
+    updates[field] = (round ? Math.round(value) : value) as HealthGoals[keyof HealthGoals]
+  }
+
+  assignIfDetected('targetEmergencyFundMonths', ['liquidite', 'fonds urgence', 'epargne precaution', 'mois'])
+  assignIfDetected('maxCryptoShareTotal', ['crypto max', 'crypto'])
+  assignIfDetected('maxSinglePositionShare', ['position unique max', 'position max', 'type dominant max'])
+  assignIfDetected('maxTop3PositionsShare', ['top 3 max', 'top3 max', 'top 3'])
+  assignIfDetected('maxDebtToAssetRatio', ['dette actifs max', 'dette/actifs max', 'ratio dette'])
+  assignIfDetected('maxDebtServiceToIncomeRatio', ['mensualites revenus max', 'mensualites/revenus max', 'service de la dette'])
+  assignIfDetected('allocationDriftTolerance', ['tolerance allocation', 'ecart allocation'])
+  assignIfDetected('minAssetClassCount', ['classes actifs min', 'classes d actifs min'])
+  assignIfDetected('minGeoBucketCount', ['zones geographiques min', 'zones geo min'])
+  assignIfDetected('minSectorBucketCount', ['secteurs min'])
+
+  return updates
 }
 
 // ─── Investment CSV helpers ───────────────────────────────────────────────────
@@ -2775,6 +3459,7 @@ app.get('/api/state', async (_request, response) => {
     emergencyFundDesignated: state.emergencyFundDesignated,
     emergencyFundTargetMonths: state.emergencyFundTargetMonths,
     emergencyFundMonthlyExpenses: state.emergencyFundMonthlyExpenses,
+    healthGoals: state.healthGoals,
     analysis,
     patrimony,
     suggestions,
@@ -3039,6 +3724,7 @@ app.put('/api/emergency-fund', (request, response) => {
 
   if (typeof body.targetMonths === 'number') {
     state.emergencyFundTargetMonths = body.targetMonths
+    state.healthGoals.targetEmergencyFundMonths = body.targetMonths
   }
   if (Array.isArray(body.designated)) {
     state.emergencyFundDesignated = body.designated
@@ -3060,6 +3746,36 @@ app.put('/api/emergency-fund', (request, response) => {
     emergencyFundTargetMonths: state.emergencyFundTargetMonths,
     emergencyFundMonthlyExpenses: state.emergencyFundMonthlyExpenses,
     emergencyFundDesignated: state.emergencyFundDesignated,
+    healthGoals: state.healthGoals,
+    patrimony,
+    suggestions,
+  })
+})
+
+app.get('/api/health-goals', (_request, response) => {
+  const state = readStore()
+  response.json(state.healthGoals)
+})
+
+app.put('/api/health-goals', (request, response) => {
+  const body = request.body as Partial<HealthGoals>
+  const state = readStore()
+
+  state.healthGoals = sanitizeHealthGoals({
+    ...state.healthGoals,
+    ...body,
+  })
+  state.emergencyFundTargetMonths = state.healthGoals.targetEmergencyFundMonths
+
+  writeStore(state)
+
+  const analysis = buildAnalysis(state)
+  const patrimony = buildPatrimony(state, analysis)
+  const suggestions = generateSuggestions(state, analysis, patrimony)
+
+  response.json({
+    healthGoals: state.healthGoals,
+    emergencyFundTargetMonths: state.emergencyFundTargetMonths,
     patrimony,
     suggestions,
   })
@@ -3109,18 +3825,75 @@ app.post('/api/ai/ask', async (request, response) => {
 
   const monthKey = body.monthKey || analysis?.months?.[0]?.key || ''
 
-  const liveSnapshot: LiveInvestmentSnapshot | null = null
+  const liveSnapshot = await getCachedLiveInvestmentSnapshot(state, '24h').catch(() => null)
+
+  // Check if user is asking for an action plan
+  const normalizedQuery = normalizeAssistantQuery(body.query)
+  const isActionPlanRequested =
+    normalizedQuery.includes('plan d action') ||
+    normalizedQuery.includes('plan action') ||
+    normalizedQuery.includes('plan 30') ||
+    normalizedQuery.includes('plan d\'action') ||
+    normalizedQuery.includes('actions') ||
+    normalizedQuery.includes('prochaines etapes') ||
+    normalizedQuery.includes('prochaines étapes')
+
+  // Generate action plan if requested
+  const actionPlan = isActionPlanRequested ? generateActionPlan(analysis, patrimony, state.healthGoals, liveSnapshot) : undefined
+
+  if (isActionPlanRequested && actionPlan) {
+    const byWeek = [1, 2, 3, 4]
+      .map((week) => {
+        const tasks = actionPlan.tasks.filter((task) => task.week === week)
+        if (tasks.length === 0) return null
+        return [
+          `### Semaine ${week}`,
+          ...tasks.map((task) => `- ${task.title} (priorite: ${task.priority}, echeance: ${task.targetDate})`),
+        ].join('\n')
+      })
+      .filter(Boolean)
+      .join('\n\n')
+
+    response.json({
+      mode: 'local',
+      title: 'Plan d action 30 jours',
+      answer: [
+        `## Plan d action 30 jours`,
+        actionPlan.summary,
+        '',
+        byWeek,
+        '',
+        `Impact financier estime: ${formatEuroShort(actionPlan.estimatedFinancialImpact)} / mois`,
+      ].join('\n'),
+      transactions: [],
+      actionPlan,
+    })
+    return
+  }
 
   try {
-    const answer = await askRemoteAi(body.query, analysis, monthKey, patrimony, liveSnapshot ?? undefined)
+    const answer = await askRemoteAi(
+      body.query,
+      analysis,
+      monthKey,
+      patrimony,
+      liveSnapshot ?? undefined,
+      state.healthGoals,
+    )
     const promptCard = buildPromptKeyFinancialCard(analysis, monthKey, patrimony, liveSnapshot, body.promptKey)
+    const investmentLinesRequested =
+      normalizedQuery.includes('pea') ||
+      normalizedQuery.includes('assurance vie') ||
+      normalizedQuery.includes('assurance-vie') ||
+      normalizedQuery.includes('ligne')
 
-    if (answer) {
+    if (answer && !(investmentLinesRequested && isGenericInvestmentRemoteAnswer(answer))) {
       response.json({
         mode: 'remote',
         title: promptCard?.title ?? 'Assistant IA',
-        answer,
+        answer: ensureAdvisorMarkdown(answer),
         transactions: [],
+        actionPlan,
       })
     } else if (promptCard) {
       console.info('[AI] Falling back to local prompt card: empty remote answer')
@@ -3129,6 +3902,7 @@ app.post('/api/ai/ask', async (request, response) => {
         title: promptCard.title,
         answer: promptCard.answer,
         transactions: promptCard.transactions,
+        actionPlan,
       })
     } else {
       console.info('[AI] Falling back to local financial fallback: empty remote answer')
@@ -3138,6 +3912,7 @@ app.post('/api/ai/ask', async (request, response) => {
         title: fallback.title,
         answer: fallback.answer,
         transactions: fallback.transactions,
+        actionPlan,
       })
     }
   } catch (err) {
@@ -3149,6 +3924,7 @@ app.post('/api/ai/ask', async (request, response) => {
       title: fallback.title,
       answer: fallback.answer,
       transactions: fallback.transactions,
+      actionPlan,
     })
   }
 })
@@ -3160,6 +3936,86 @@ app.post('/api/ai/suggest', (_request, response) => {
   const suggestions = generateSuggestions(state, analysis, patrimony)
 
   response.json({ suggestions })
+})
+
+app.post('/api/ai/actions/health-goals', (request, response) => {
+  const body = request.body as {
+    query?: string
+    updates?: Partial<HealthGoals>
+    dryRun?: boolean
+  }
+
+  const state = readStore()
+  const dryRun = body.dryRun !== false
+  const parsedFromQuery = body.query ? extractHealthGoalsUpdatesFromQuery(body.query) : {}
+  const requestedUpdates = {
+    ...parsedFromQuery,
+    ...(body.updates ?? {}),
+  }
+
+  const updateEntries = Object.entries(requestedUpdates) as Array<[keyof HealthGoals, number | undefined]>
+  if (updateEntries.length === 0) {
+    response.json({
+      kind: 'health-goals-update',
+      dryRun,
+      hasChanges: false,
+      message: 'Aucune modification de paramètre détectée dans la demande.',
+      changes: [],
+    })
+    return
+  }
+
+  const nextGoals = sanitizeHealthGoals({
+    ...state.healthGoals,
+    ...requestedUpdates,
+  })
+
+  const changes = (Object.keys(nextGoals) as Array<keyof HealthGoals>)
+    .filter((field) => nextGoals[field] !== state.healthGoals[field])
+    .map((field) => ({
+      field,
+      from: state.healthGoals[field],
+      to: nextGoals[field],
+    }))
+
+  if (changes.length === 0) {
+    response.json({
+      kind: 'health-goals-update',
+      dryRun,
+      hasChanges: false,
+      message: 'Les paramètres détectés sont déjà appliqués.',
+      changes: [],
+    })
+    return
+  }
+
+  if (!dryRun) {
+    state.healthGoals = nextGoals
+    state.emergencyFundTargetMonths = nextGoals.targetEmergencyFundMonths
+    writeStore(state)
+    const analysis = buildAnalysis(state)
+    const patrimony = buildPatrimony(state, analysis)
+    const suggestions = generateSuggestions(state, analysis, patrimony)
+    response.json({
+      kind: 'health-goals-update',
+      dryRun: false,
+      hasChanges: true,
+      message: 'Objectifs de santé financière mis à jour.',
+      changes,
+      healthGoals: state.healthGoals,
+      suggestions,
+    })
+    return
+  }
+
+  response.json({
+    kind: 'health-goals-update',
+    dryRun: true,
+    hasChanges: true,
+    message: 'Modifications détectées. Confirmez pour appliquer.',
+    changes,
+    healthGoals: nextGoals,
+  })
 })
 
 // ─── Investment imports routes ────────────────────────────────────────────────
@@ -3541,6 +4397,7 @@ app.get('/api/emergency-fund', (_request, response) => {
   response.json({
     emergencyFundTargetMonths: state.emergencyFundTargetMonths,
     emergencyFundMonthlyExpenses: state.emergencyFundMonthlyExpenses,
+    healthGoals: state.healthGoals,
     emergencyFund: patrimony.emergencyFund,
   })
 })
@@ -3600,9 +4457,14 @@ app.get('/api/health-score', async (_request, response) => {
 
   const largestPlacement = byPlacementType[0]
   const largestPlacementShare = largestPlacement?.share ?? 0
-
-  const placementDiversificationScore = placementTotalValue > 0
-    ? Math.max(0, Math.min(100, Math.round(100 - Math.max(0, (largestPlacementShare - 0.4) * 180))))
+  const cryptoShareTotal =
+    patrimony.totalAssets > 0
+      ? (patrimony.assetsByProductType.crypto ?? 0) / patrimony.totalAssets
+      : 0
+  const maxCryptoShareTarget = state.healthGoals.maxCryptoShareTotal / 100
+  const maxSinglePlacementTarget = state.healthGoals.maxSinglePositionShare / 100
+  const placementDiversificationRawScore = placementTotalValue > 0
+    ? Math.max(0, Math.min(100, Math.round(100 - Math.max(0, (largestPlacementShare - maxSinglePlacementTarget) * 140))))
     : 0
 
   const placementDiversificationDetail = {
@@ -3616,8 +4478,24 @@ app.get('/api/health-score', async (_request, response) => {
   const allAssets = patrimony.bankCash + patrimony.livretTotal
     + Object.values(patrimony.assetsByProductType).reduce((s, v) => s + v, 0)
   const debtTotal = debts.reduce((s, d) => s + d.balance, 0)
+  const totalDebtMonthlyPayment = debts.reduce((sum, debt) => sum + (debt.monthlyPayment ?? 0), 0)
   const debtToAsset = allAssets > 0 ? Math.min(1, debtTotal / allAssets) : 0
-  const resilienceScore = Math.max(0, Math.min(100, 100 - debtToAsset * 80))
+  const resilienceRawScore = Math.max(0, Math.min(100, 100 - debtToAsset * 80))
+  const maxDebtRatioTarget = state.healthGoals.maxDebtToAssetRatio / 100
+  const resilienceObjectiveAchievement = debtToAsset <= maxDebtRatioTarget || debtToAsset === 0
+    ? 100
+    : Math.max(0, Math.min(100, (maxDebtRatioTarget / debtToAsset) * 100))
+  const latestMonthKey = analysis?.months?.[0]?.key
+  const latestMonthIncome = latestMonthKey ? (analysis?.monthly[latestMonthKey]?.income ?? 0) : 0
+  const monthlyIncomeReference = latestMonthIncome > 0 ? latestMonthIncome : state.emergencyFundMonthlyExpenses ?? 0
+  const debtServiceToIncomeRatio = monthlyIncomeReference > 0 ? totalDebtMonthlyPayment / monthlyIncomeReference : 0
+  const maxDebtServiceTarget = state.healthGoals.maxDebtServiceToIncomeRatio / 100
+  const debtServiceObjectiveAchievement = totalDebtMonthlyPayment <= 0 || debtServiceToIncomeRatio <= maxDebtServiceTarget
+    ? 100
+    : Math.max(0, Math.min(100, (maxDebtServiceTarget / debtServiceToIncomeRatio) * 100))
+  const resilienceAchievement = Math.round(
+    resilienceObjectiveAchievement * 0.6 + debtServiceObjectiveAchievement * 0.4,
+  )
 
   // 4. Diversification — use live snapshot to enrich each line with resolved symbols/metadata when possible
   let diversificationAnalysis: DiversificationAnalysis | null = null
@@ -3649,13 +4527,53 @@ app.get('/api/health-score', async (_request, response) => {
     ? diversificationAnalysis.score
     : Math.min(100, investmentTypes.length * 22)
 
+  const internalDiversificationTargetScore = 70
+
   const totalMarketValue = marketPositionsForDetail.reduce((sum, position) => sum + position.currentValue, 0)
   const enrichedSectorBuckets = await buildAutoSectorBuckets(marketPositionsForDetail, totalMarketValue)
+  const effectiveGeoBuckets = diversificationAnalysis?.byGeography ?? []
+  const effectiveSectorBuckets = enrichedSectorBuckets.length > 0 ? enrichedSectorBuckets : (diversificationAnalysis?.bySector ?? [])
+  const geoCount = effectiveGeoBuckets.length
+  const sectorCount = effectiveSectorBuckets.length
+  const assetClassCount = byPlacementType.length
+  const top3Share = diversificationAnalysis?.concentration.top3Share ?? 0
+
+  const scoreTargetAchievement = internalDiversificationTargetScore <= 0
+    ? 100
+    : Math.max(0, Math.min(100, (finalDiversificationScore / internalDiversificationTargetScore) * 100))
+  const geoTargetAchievement = Math.max(0, Math.min(100, (geoCount / state.healthGoals.minGeoBucketCount) * 100))
+  const sectorTargetAchievement = Math.max(0, Math.min(100, (sectorCount / state.healthGoals.minSectorBucketCount) * 100))
+  const assetClassTargetAchievement = Math.max(0, Math.min(100, (assetClassCount / state.healthGoals.minAssetClassCount) * 100))
+  const top3Target = state.healthGoals.maxTop3PositionsShare / 100
+  const top3TargetAchievement = top3Share <= top3Target || top3Share === 0
+    ? 100
+    : Math.max(0, Math.min(100, (top3Target / top3Share) * 100))
+  const dominantPlacementAchievement = largestPlacementShare <= maxSinglePlacementTarget || largestPlacementShare === 0
+    ? 100
+    : Math.max(0, Math.min(100, (maxSinglePlacementTarget / largestPlacementShare) * 100))
+  const cryptoTargetAchievement = placementTotalValue > 0
+    ? (cryptoShareTotal <= maxCryptoShareTarget || cryptoShareTotal === 0
+      ? 100
+      : Math.max(0, Math.min(100, (maxCryptoShareTarget / cryptoShareTotal) * 100)))
+    : 100
+
+  const placementObjectiveAchievement = Math.round(
+    cryptoTargetAchievement * 0.45 +
+      dominantPlacementAchievement * 0.25 +
+      assetClassTargetAchievement * 0.15 +
+      top3TargetAchievement * 0.15,
+  )
+
+  const diversificationObjectiveAchievement = Math.round(
+    scoreTargetAchievement * 0.5 +
+      geoTargetAchievement * 0.25 +
+      sectorTargetAchievement * 0.25,
+  )
 
   const diversificationDetail = {
     kind: 'diversification' as const,
-    byGeography: diversificationAnalysis?.byGeography ?? [],
-    bySector: enrichedSectorBuckets.length > 0 ? enrichedSectorBuckets : (diversificationAnalysis?.bySector ?? []),
+    byGeography: effectiveGeoBuckets,
+    bySector: effectiveSectorBuckets,
     score: finalDiversificationScore,
     level: diversificationAnalysis?.level ?? 'weak',
     concentration: diversificationAnalysis?.concentration ?? {
@@ -3665,10 +4583,123 @@ app.get('/api/health-score', async (_request, response) => {
   }
 
   const axes = [
-    { key: 'liquidity', label: 'Liquidité', score: Math.round(liquidityScore), description: `${(emergencyCoverageRatio * 100).toFixed(0)}% de l'objectif de réserve`, detail: liquidityDetail },
-    { key: 'placement-diversification', label: 'Types de placement', score: Math.round(placementDiversificationScore), description: largestPlacement ? `${largestPlacement.label} ${(largestPlacement.share * 100).toFixed(1)}% du total` : 'Aucune exposition détectée', detail: placementDiversificationDetail },
-    { key: 'resilience', label: 'Résilience', score: Math.round(resilienceScore), description: `Endettement ${(debtToAsset * 100).toFixed(0)} % des actifs` },
-    { key: 'diversification', label: 'Diversification', score: Math.round(finalDiversificationScore), description: analyzedPositionsCount > 0 ? `${analyzedPositionsCount} ligne(s) analysée(s)` : `${investmentTypes.length} type(s) de placement investis`, detail: diversificationDetail },
+    {
+      key: 'liquidity',
+      label: 'Liquidité',
+      score: patrimony.emergencyFund.target > 0
+        ? Math.max(0, Math.min(100, Math.round((patrimony.emergencyFund.current / patrimony.emergencyFund.target) * 100)))
+        : 100,
+      rawScore: Math.round(liquidityScore),
+      targetScore: 100,
+      objectiveLabel: `${state.healthGoals.targetEmergencyFundMonths} mois d épargne de précaution`,
+      objectiveMetric: `${efMonths.toFixed(1)} mois couverts`,
+      objectiveBreakdown: [
+        {
+          label: 'Couverture de liquidité',
+          target: `${state.healthGoals.targetEmergencyFundMonths.toFixed(0)} mois`,
+          current: `${efMonths.toFixed(1)} mois`,
+          achievement: patrimony.emergencyFund.target > 0
+            ? Math.max(0, Math.min(100, (patrimony.emergencyFund.current / patrimony.emergencyFund.target) * 100))
+            : 100,
+        },
+      ],
+      description: `${(emergencyCoverageRatio * 100).toFixed(0)}% de l'objectif de réserve`,
+      detail: liquidityDetail,
+    },
+    {
+      key: 'placement-diversification',
+      label: 'Types de placement',
+      score: Math.round(placementObjectiveAchievement),
+      rawScore: Math.round(placementDiversificationRawScore),
+      targetScore: 100,
+      objectiveLabel: `Cibles: crypto <= ${state.healthGoals.maxCryptoShareTotal.toFixed(0)}%, type dominant <= ${state.healthGoals.maxSinglePositionShare.toFixed(0)}%, top3 <= ${state.healthGoals.maxTop3PositionsShare.toFixed(0)}%, classes >= ${state.healthGoals.minAssetClassCount}`,
+      objectiveMetric: `Actuel: crypto ${(cryptoShareTotal * 100).toFixed(1)}%, type dominant ${(largestPlacementShare * 100).toFixed(1)}%, top3 ${(top3Share * 100).toFixed(1)}%, classes ${assetClassCount}`,
+      objectiveBreakdown: [
+        {
+          label: 'Poids crypto dans le patrimoine',
+          target: `<= ${state.healthGoals.maxCryptoShareTotal.toFixed(0)}%`,
+          current: `${(cryptoShareTotal * 100).toFixed(1)}%`,
+          achievement: cryptoTargetAchievement,
+        },
+        {
+          label: 'Concentration du type dominant',
+          target: `<= ${(maxSinglePlacementTarget * 100).toFixed(0)}%`,
+          current: `${(largestPlacementShare * 100).toFixed(1)}%`,
+          achievement: dominantPlacementAchievement,
+        },
+        {
+          label: 'Concentration top 3',
+          target: `<= ${(top3Target * 100).toFixed(0)}%`,
+          current: `${(top3Share * 100).toFixed(1)}%`,
+          achievement: top3TargetAchievement,
+        },
+        {
+          label: 'Nombre de classes d actifs',
+          target: `>= ${state.healthGoals.minAssetClassCount}`,
+          current: `${assetClassCount}`,
+          achievement: assetClassTargetAchievement,
+        },
+      ],
+      description: largestPlacement
+        ? `${largestPlacement.label} ${(largestPlacement.share * 100).toFixed(1)}% des placements · crypto ${(cryptoShareTotal * 100).toFixed(1)}% du patrimoine`
+        : 'Aucune exposition détectée',
+      detail: placementDiversificationDetail,
+    },
+    {
+      key: 'resilience',
+      label: 'Résilience',
+      score: Math.round(resilienceAchievement),
+      rawScore: Math.round(resilienceRawScore),
+      targetScore: 100,
+      objectiveLabel: `Cibles: dette/actifs <= ${state.healthGoals.maxDebtToAssetRatio.toFixed(0)}%, mensualités/revenus <= ${state.healthGoals.maxDebtServiceToIncomeRatio.toFixed(0)}%`,
+      objectiveMetric: `Actuel: dette/actifs ${(debtToAsset * 100).toFixed(1)}%, mensualités/revenus ${(debtServiceToIncomeRatio * 100).toFixed(1)}%`,
+      objectiveBreakdown: [
+        {
+          label: 'Ratio dette / actifs',
+          target: `<= ${state.healthGoals.maxDebtToAssetRatio.toFixed(0)}%`,
+          current: `${(debtToAsset * 100).toFixed(1)}%`,
+          achievement: resilienceObjectiveAchievement,
+        },
+        {
+          label: 'Mensualités dettes / revenus',
+          target: `<= ${state.healthGoals.maxDebtServiceToIncomeRatio.toFixed(0)}%`,
+          current: `${(debtServiceToIncomeRatio * 100).toFixed(1)}%`,
+          achievement: debtServiceObjectiveAchievement,
+        },
+      ],
+      description: `Endettement ${(debtToAsset * 100).toFixed(0)} % des actifs`,
+    },
+    {
+      key: 'diversification',
+      label: 'Diversification',
+      score: Math.round(diversificationObjectiveAchievement),
+      rawScore: Math.round(finalDiversificationScore),
+      targetScore: 100,
+      objectiveLabel: `Cibles: score interne >= ${internalDiversificationTargetScore}/100, geo >= ${state.healthGoals.minGeoBucketCount}, secteurs >= ${state.healthGoals.minSectorBucketCount}`,
+      objectiveMetric: `Actuel: score ${Math.round(finalDiversificationScore)}/100, geo ${geoCount}, secteurs ${sectorCount}`,
+      objectiveBreakdown: [
+        {
+          label: 'Score diversification',
+          target: `>= ${internalDiversificationTargetScore}/100`,
+          current: `${Math.round(finalDiversificationScore)}/100`,
+          achievement: scoreTargetAchievement,
+        },
+        {
+          label: 'Diversification géographique',
+          target: `>= ${state.healthGoals.minGeoBucketCount}`,
+          current: `${geoCount}`,
+          achievement: geoTargetAchievement,
+        },
+        {
+          label: 'Diversification sectorielle',
+          target: `>= ${state.healthGoals.minSectorBucketCount}`,
+          current: `${sectorCount}`,
+          achievement: sectorTargetAchievement,
+        },
+      ],
+      description: analyzedPositionsCount > 0 ? `${analyzedPositionsCount} ligne(s) analysée(s) pour mesurer la diversification réelle` : `${investmentTypes.length} type(s) de placement investis`,
+      detail: diversificationDetail,
+    },
   ]
 
   const globalScore = Math.round(axes.reduce((s, a) => s + a.score, 0) / axes.length)
@@ -3678,7 +4709,13 @@ app.get('/api/health-score', async (_request, response) => {
 // ─── Patrimony Timeline ───────────────────────────────────────────────────────
 app.get('/api/timeline', (_request, response) => {
   const state = readStore()
-  const snapshots = getDailySnapshots()
+  const snapshots = getDailySnapshots() as Array<{
+    date: string
+    net_worth: number
+    cash: number
+    investments: number
+    debts: number
+  }>
   const realEstate = getAllRealEstate()
   const vehicles = getAllVehicles()
   const debts = getAllDebts()
@@ -3746,19 +4783,21 @@ app.get('/api/timeline', (_request, response) => {
   }
 
   for (const account of state.accounts) {
-    const firstImport = account.csvImports?.[0]
-    if (firstImport?.uploadedAt) {
-      events.push({
-        id: `acc-${account.id}`,
-        date: firstImport.uploadedAt.slice(0, 10),
-        type: 'account',
-        icon: '💼',
-        title: `Compte suivi : ${account.name}`,
-        amount: account.balance > 0 ? account.balance : undefined,
-        description: account.institution ?? account.productType,
-      })
-    }
+  const firstImport = account.csvImports?.[0]
+  if (firstImport?.uploadedAt) {
+    const balance = getAccountBalance(account) // computed balance
+
+    events.push({
+      id: `acc-${account.id}`,
+      date: firstImport.uploadedAt.slice(0, 10),
+      type: 'account',
+      icon: '💼',
+      title: `Compte suivi : ${account.name}`,
+      amount: balance > 0 ? balance : undefined,
+      description: account.institution ?? account.productType,
+    })
   }
+}
 
   // Net worth milestones — detect crossing 10k multiples
   if (snapshots.length > 1) {

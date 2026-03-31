@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { BudgetAnalysis, Goal, RecurringExpense } from '../types'
 import { formatCurrency, formatPercent } from '../lib/finance'
 import type { ManualNetWorthItem } from '../types'
@@ -109,62 +109,20 @@ type DashboardAlert = {
   description: string
 }
 
-type AiBrief = {
-  title: string
-  content: string
-  mode: 'remote' | 'local'
-  promptKey: keyof typeof AI_PROMPTS
+type HealthScoreAxis = {
+  key: string
+  label: string
+  score: number
+  description: string
+}
+
+type HealthScoreResponse = {
+  globalScore: number
+  axes: HealthScoreAxis[]
 }
 
 const LIVRET_TYPES = ['livret-a', 'livret-jeune', 'lep', 'ldds', 'livret-other']
 const MARKET_REFRESH_INTERVAL_MS = 60 * 1000
-
-const AI_PROMPTS = {
-  executive:
-    'Fais une synthèse exécutive premium de ma situation financière actuelle en 6 phrases maximum avec ton direct, décisions prioritaires et signaux à surveiller.',
-  actions:
-    'Donne-moi un plan d’action financier en 3 priorités maximum pour le mois en cours, avec des actions concrètes et chiffrées si possible.',
-  risks:
-    'Identifie les principaux risques ou déséquilibres de mon profil financier actuel et explique les corrections les plus efficaces.',
-  allocation:
-    'Propose une allocation patrimoniale cible simple et concrète à partir de ma situation actuelle, en distinguant trésorerie, épargne de précaution, investissements et points de rééquilibrage.',
-} as const
-
-const AI_BRIEF_KEYS = Object.keys(AI_PROMPTS) as Array<keyof typeof AI_PROMPTS>
-
-const AI_BRIEF_META: Record<
-  keyof typeof AI_PROMPTS,
-  { label: string; title: string; description: string; icon: string; tone: string }
-> = {
-  executive: {
-    label: 'Vue exécutive',
-    title: 'Synthèse globale',
-    description: 'Lecture rapide de la situation patrimoniale et budgétaire.',
-    icon: '◉',
-    tone: 'executive',
-  },
-  actions: {
-    label: 'Plan prioritaire',
-    title: 'Actions à mener',
-    description: 'Décisions concrètes à prendre maintenant.',
-    icon: '→',
-    tone: 'actions',
-  },
-  risks: {
-    label: 'Zone de vigilance',
-    title: 'Risques et déséquilibres',
-    description: 'Points de tension à surveiller et à corriger.',
-    icon: '!',
-    tone: 'risks',
-  },
-  allocation: {
-    label: 'Allocation cible',
-    title: 'Rééquilibrage recommandé',
-    description: 'Vue d ensemble sur la structure patrimoniale à viser.',
-    icon: '□',
-    tone: 'allocation',
-  },
-}
 
 const formatSignedCurrency = (value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value)}`
 
@@ -219,18 +177,8 @@ export default function DashboardTab({
 }: Props) {
   const [refreshing, setRefreshing] = useState(false)
   const [liveInvestments, setLiveInvestments] = useState<LiveInvestmentSnapshot | null>(null)
-  const aiBriefMonthKeyRef = useRef<string | null>(null)
-  const aiBriefInFlightRef = useRef(false)
-  const [aiBriefs, setAiBriefs] = useState<Partial<Record<keyof typeof AI_PROMPTS, AiBrief>>>({})
-  const [, setLoadingAiBriefs] = useState<Record<keyof typeof AI_PROMPTS, boolean>>({
-    executive: false,
-    actions: false,
-    risks: false,
-    allocation: false,
-  })
-  const [, setAiBriefError] = useState<string | null>(null)
-  const [, setAiBriefLastRefreshAt] = useState<string | null>(null)
   const [goals, setGoals] = useState<Goal[]>([])
+  const [healthScore, setHealthScore] = useState<HealthScoreResponse | null>(null)
 
   useEffect(() => {
     if (backendStatus !== 'online') return
@@ -255,69 +203,6 @@ export default function DashboardTab({
   }, [backendStatus])
 
   const hasPatrimony = Boolean(patrimony)
-
-  const fetchAiBriefCard = async (promptKey: keyof typeof AI_PROMPTS) => {
-    setLoadingAiBriefs((current) => ({ ...current, [promptKey]: true }))
-    try {
-      const monthKey = analysis?.months?.[0]?.key
-      const payload = await api.post<{ title: string; answer: string; mode: 'remote' | 'local' }>(
-        '/ai/ask',
-        {
-          query: AI_PROMPTS[promptKey],
-          promptKey,
-          monthKey,
-        },
-        { cache: 'no-store' },
-      )
-      setAiBriefs((current) => ({
-        ...current,
-        [promptKey]: {
-          title: payload.title || AI_BRIEF_META[promptKey].title,
-          content: payload.answer || 'Aucune analyse disponible.',
-          mode: payload.mode,
-          promptKey,
-        },
-      }))
-      setAiBriefError(null)
-      return true
-    } catch {
-      return false
-    } finally {
-      setLoadingAiBriefs((current) => ({ ...current, [promptKey]: false }))
-    }
-  }
-
-  const handleGenerateAiBriefs = async (force = false) => {
-    if (aiBriefInFlightRef.current) return
-
-    const monthKey = analysis?.months?.[0]?.key ?? null
-    const hasAllCards = AI_BRIEF_KEYS.every((key) => Boolean(aiBriefs[key]))
-    if (!force && monthKey && aiBriefMonthKeyRef.current === monthKey && hasAllCards) {
-      return
-    }
-
-    aiBriefInFlightRef.current = true
-    setAiBriefError(null)
-
-    try {
-      const results = await Promise.all(AI_BRIEF_KEYS.map((promptKey) => fetchAiBriefCard(promptKey)))
-      if (results.some((result) => !result)) {
-        setAiBriefError('Impossible de générer toutes les cartes IA pour le moment.')
-      } else {
-        aiBriefMonthKeyRef.current = monthKey
-        setAiBriefError(null)
-      }
-      setAiBriefLastRefreshAt(new Date().toISOString())
-    } finally {
-      aiBriefInFlightRef.current = false
-    }
-  }
-
-  useEffect(() => {
-    const currentMonthKey = analysis?.months?.[0]?.key
-    if (!currentMonthKey || backendStatus !== 'online') return
-    void handleGenerateAiBriefs(false)
-  }, [analysis, backendStatus])
 
   useEffect(() => {
     if (!hasPatrimony || backendStatus !== 'online') {
@@ -355,12 +240,42 @@ export default function DashboardTab({
     }
   }, [hasPatrimony, backendStatus])
 
+  useEffect(() => {
+    if (!hasPatrimony || backendStatus !== 'online') {
+      setHealthScore(null)
+      return
+    }
+
+    let cancelled = false
+
+    void api.get<HealthScoreResponse>('/health-score', { cache: 'no-store' })
+      .then((payload) => {
+        if (!cancelled) {
+          setHealthScore(payload)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHealthScore(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [hasPatrimony, backendStatus])
+
   const handleRefreshAnalysis = async () => {
     setRefreshing(true)
     try {
-      await handleGenerateAiBriefs()
-      const data = await api.post<{ suggestions: Suggestion[] }>('/ai/suggest')
-      onSuggestionsRefresh(data.suggestions)
+      const [suggestionsData, healthData] = await Promise.all([
+        api.post<{ suggestions: Suggestion[] }>('/ai/suggest'),
+        api.get<HealthScoreResponse>('/health-score', { cache: 'no-store' }).catch(() => null),
+      ])
+      onSuggestionsRefresh(suggestionsData.suggestions)
+      if (healthData) {
+        setHealthScore(healthData)
+      }
     } catch {
       // silent fail
     } finally {
@@ -390,7 +305,7 @@ export default function DashboardTab({
     .reduce((sum, [, value]) => sum + value, 0)
 
   const liveMarketTotal = liveInvestments?.totalCurrentValue ?? investedAssets
-  const assetTotal = liveMarketTotal + patrimony.livretTotal + patrimony.externalPatrimonyTotal
+  const assetTotal = patrimony.bankCash + liveMarketTotal + patrimony.livretTotal + patrimony.externalPatrimonyTotal
   const emergencyMissing = Math.max(0, patrimony.emergencyFund.target - patrimony.emergencyFund.current)
 
   const lastHistoryPoint = history[history.length - 1]
@@ -405,6 +320,12 @@ export default function DashboardTab({
     .slice(0, 3)
 
   const decisionItems: DecisionAction[] = []
+  const suggestionTarget = (category: string): DecisionAction['target'] => {
+    if (category === 'emergency-fund') return 'objectifs'
+    if (category === 'allocation') return 'comptes'
+    if (category === 'debt') return 'simulateurs'
+    return 'budget'
+  }
 
   if (currentMonth && currentMonth.budgetGap < 0) {
     decisionItems.push({
@@ -455,8 +376,7 @@ export default function DashboardTab({
   }
 
   suggestions
-    .filter((suggestion) => suggestion.priority !== 'low')
-    .slice(0, 2)
+    .slice(0, 4)
     .forEach((suggestion) => {
       decisionItems.push({
         id: suggestion.id,
@@ -464,8 +384,35 @@ export default function DashboardTab({
         description: suggestion.description,
         impact: suggestion.actionableAdvice,
         tone: suggestion.priority,
-        ctaLabel: suggestion.category.toLowerCase().includes('objectif') ? 'Ouvrir les objectifs' : 'Traiter le sujet',
-        target: suggestion.category.toLowerCase().includes('objectif') ? 'objectifs' : 'budget',
+        ctaLabel: suggestion.category === 'allocation' ? 'Analyser les positions' : 'Traiter le sujet',
+        target: suggestionTarget(suggestion.category),
+      })
+    })
+
+  const healthAxisToTarget = (axisKey: string): DecisionAction['target'] => {
+    if (axisKey === 'resilience') return 'simulateurs'
+    if (axisKey === 'placement-diversification' || axisKey === 'diversification') return 'patrimoine'
+    return 'objectifs'
+  }
+
+  const healthAxisToCta = (axisKey: string) => {
+    if (axisKey === 'resilience') return 'Tester un plan de désendettement'
+    if (axisKey === 'placement-diversification' || axisKey === 'diversification') return 'Analyser la diversification'
+    return 'Ajuster les objectifs'
+  }
+
+  healthScore?.axes
+    .filter((axis) => axis.score < 85)
+    .slice(0, 3)
+    .forEach((axis) => {
+      decisionItems.push({
+        id: `health-axis-${axis.key}`,
+        title: `Score santé faible: ${axis.label}`,
+        description: axis.description,
+        impact: `${Math.round(axis.score)}/100 actuellement`,
+        tone: axis.score < 70 ? 'high' : 'medium',
+        ctaLabel: healthAxisToCta(axis.key),
+        target: healthAxisToTarget(axis.key),
       })
     })
 
@@ -483,7 +430,10 @@ export default function DashboardTab({
     })
   }
 
-  const topDecisionItems = decisionItems.slice(0, 4)
+  const toneWeight: Record<DecisionAction['tone'], number> = { high: 3, medium: 2, low: 1 }
+  const topDecisionItems = [...decisionItems]
+    .sort((left, right) => toneWeight[right.tone] - toneWeight[left.tone])
+    .slice(0, 5)
   const bourseTotal =
     (mergedAssetsByProductType['assurance-vie'] ?? 0) +
     (mergedAssetsByProductType.pea ?? 0) +
@@ -554,14 +504,14 @@ export default function DashboardTab({
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <div style={{ padding: '6px 14px', borderRadius: '20px', background: backendStatus === 'online' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', border: `1px solid ${backendStatus === 'online' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`, fontSize: '0.8rem', color: backendStatus === 'online' ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
-            {backendStatus === 'online' ? '● IA & marchés actifs' : '● Backend indisponible'}
+            {backendStatus === 'online' ? '● Recommandations actives' : '● Backend indisponible'}
           </div>
           <button
             onClick={handleRefreshAnalysis}
             disabled={refreshing || backendStatus !== 'online'}
             style={{ padding: '10px 20px', background: 'linear-gradient(135deg,var(--accent-blue),var(--accent-copper))', border: 'none', borderRadius: '999px', color: '#fff', fontWeight: 600, cursor: 'pointer', opacity: refreshing || backendStatus !== 'online' ? 0.6 : 1, fontSize: '0.9rem' }}
           >
-            {refreshing ? 'Actualisation…' : "Rafraîchir l'analyse"}
+            {refreshing ? 'Actualisation…' : 'Rafraîchir les recommandations'}
           </button>
         </div>
       </div>
@@ -614,14 +564,16 @@ export default function DashboardTab({
         </section>
       </div>
 
+      <HealthScoreWidget backendStatus={backendStatus} />
+
       <section className="premium-panel decision-panel">
         <PanelHeader
           kicker="Decision Center"
-          title="Ce qu'il faut traiter maintenant"
-          description="Priorités générées à partir du budget, de la réserve, des objectifs et des signaux de marché."
+          title="Recommandations personnalisées"
+          description="Actions priorisées selon vos objectifs de santé financière, votre budget et les signaux de concentration."
         />
         <div className="decision-grid">
-          {topDecisionItems.map((item) => (
+          {topDecisionItems.length > 0 ? topDecisionItems.map((item) => (
             <article key={item.id} className={`decision-card decision-${item.tone}`}>
               <div className="decision-card-header">
                 <span className="decision-impact-pill">{item.impact}</span>
@@ -632,11 +584,20 @@ export default function DashboardTab({
                 {item.ctaLabel}
               </button>
             </article>
-          ))}
+          )) : (
+            <article className="decision-card decision-low">
+              <div className="decision-card-header">
+                <span className="decision-impact-pill">Aucune action prioritaire</span>
+              </div>
+              <h4>Situation globalement alignée</h4>
+              <p>Vos indicateurs sont actuellement proches des objectifs configurés.</p>
+              <button type="button" className="decision-card-button" onClick={() => onNavigate('objectifs')}>
+                Ajuster les objectifs
+              </button>
+            </article>
+          )}
         </div>
       </section>
-
-      <HealthScoreWidget backendStatus={backendStatus} />
 
     </div>
   )

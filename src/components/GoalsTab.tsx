@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Plus, Trash2, Edit2, X } from 'lucide-react'
-import type { Goal } from '../types'
+import type { Goal, HealthGoals } from '../types'
 import { api } from '../lib/api'
 
 const fmt = (v: number) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v)
@@ -19,6 +19,19 @@ const emptyForm = (): FormState => ({
   currentAmount: 0,
   monthlyContribution: 0,
 })
+
+const defaultHealthGoals: HealthGoals = {
+  targetEmergencyFundMonths: 6,
+  maxCryptoShareTotal: 10,
+  maxSinglePositionShare: 15,
+  maxTop3PositionsShare: 45,
+  maxDebtToAssetRatio: 35,
+  maxDebtServiceToIncomeRatio: 30,
+  allocationDriftTolerance: 5,
+  minAssetClassCount: 4,
+  minGeoBucketCount: 3,
+  minSectorBucketCount: 5,
+}
 
 function ProgressRing({ pct, color, size = 80 }: { pct: number; color: string; size?: number }) {
   const r = (size - 8) / 2
@@ -39,10 +52,18 @@ export default function GoalsTab() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [saving, setSaving] = useState(false)
+  const [healthGoals, setHealthGoals] = useState<HealthGoals>(defaultHealthGoals)
+  const [savingHealthGoals, setSavingHealthGoals] = useState(false)
+  const [healthFeedback, setHealthFeedback] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
-    setGoals(await api.get<Goal[]>('/goals'))
+    const [goalsPayload, healthGoalsPayload] = await Promise.all([
+      api.get<Goal[]>('/goals'),
+      api.get<HealthGoals>('/health-goals').catch(() => defaultHealthGoals),
+    ])
+    setGoals(goalsPayload)
+    setHealthGoals(healthGoalsPayload)
     setLoading(false)
   }
 
@@ -78,6 +99,23 @@ export default function GoalsTab() {
   }
 
   const setF = (k: keyof FormState, v: any) => setForm(prev => ({ ...prev, [k]: v }))
+  const setHealthGoal = (k: keyof HealthGoals, v: number) => {
+    setHealthGoals((prev) => ({ ...prev, [k]: v }))
+  }
+
+  const saveHealthGoals = async () => {
+    setSavingHealthGoals(true)
+    setHealthFeedback(null)
+    try {
+      const payload = await api.put<{ healthGoals: HealthGoals }>('/health-goals', healthGoals)
+      setHealthGoals(payload.healthGoals)
+      setHealthFeedback('Objectifs de sante enregistres.')
+    } catch {
+      setHealthFeedback('Impossible d enregistrer les objectifs pour le moment.')
+    } finally {
+      setSavingHealthGoals(false)
+    }
+  }
 
   const active = goals.filter(g => !g.isCompleted)
   const completed = goals.filter(g => g.isCompleted)
@@ -102,6 +140,92 @@ export default function GoalsTab() {
         <button onClick={openCreate} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', background: 'linear-gradient(135deg,var(--accent-blue),var(--accent-purple))', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '0.95rem' }}>
           <Plus size={18} /> Nouvel objectif
         </button>
+      </div>
+
+      <div className="glass-panel" style={{ padding: '22px', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Objectifs de santé financière</h3>
+            <p style={{ margin: '6px 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+              Ces seuils pilotent les alertes et recommandations personnalisées (liquidité, concentration, diversification, dette).
+            </p>
+          </div>
+          <button
+            onClick={() => void saveHealthGoals()}
+            disabled={savingHealthGoals}
+            style={{ padding: '9px 14px', background: 'linear-gradient(135deg,var(--accent-blue),var(--accent-purple))', border: 'none', borderRadius: '10px', color: '#fff', fontWeight: 600, cursor: savingHealthGoals ? 'not-allowed' : 'pointer', opacity: savingHealthGoals ? 0.7 : 1 }}
+          >
+            {savingHealthGoals ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+          <div style={{ padding: '14px', border: '1px solid var(--border-color)', borderRadius: '12px', background: 'rgba(255,255,255,0.02)' }}>
+            <h4 style={{ margin: '0 0 8px', fontSize: '0.95rem' }}>Carte Liquidité</h4>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Liquidité cible (mois)
+              <input type="number" min={1} max={24} value={healthGoals.targetEmergencyFundMonths} onChange={(e) => setHealthGoal('targetEmergencyFundMonths', Number(e.target.value))} style={inputStyle} />
+            </label>
+          </div>
+
+          <div style={{ padding: '14px', border: '1px solid var(--border-color)', borderRadius: '12px', background: 'rgba(255,255,255,0.02)' }}>
+            <h4 style={{ margin: '0 0 8px', fontSize: '0.95rem' }}>Carte Types de placement</h4>
+            <div style={{ display: 'grid', gap: '10px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Crypto max (% patrimoine)
+                <input type="number" min={0} max={100} value={healthGoals.maxCryptoShareTotal} onChange={(e) => setHealthGoal('maxCryptoShareTotal', Number(e.target.value))} style={inputStyle} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Position unique max (%)
+                <input type="number" min={1} max={100} value={healthGoals.maxSinglePositionShare} onChange={(e) => setHealthGoal('maxSinglePositionShare', Number(e.target.value))} style={inputStyle} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Top 3 max (%)
+                <input type="number" min={1} max={100} value={healthGoals.maxTop3PositionsShare} onChange={(e) => setHealthGoal('maxTop3PositionsShare', Number(e.target.value))} style={inputStyle} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Classes d'actifs min
+                <input type="number" min={1} max={12} value={healthGoals.minAssetClassCount} onChange={(e) => setHealthGoal('minAssetClassCount', Number(e.target.value))} style={inputStyle} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Tolérance d'écart allocation (pts)
+                <input type="number" min={0} max={30} value={healthGoals.allocationDriftTolerance} onChange={(e) => setHealthGoal('allocationDriftTolerance', Number(e.target.value))} style={inputStyle} />
+              </label>
+            </div>
+          </div>
+
+          <div style={{ padding: '14px', border: '1px solid var(--border-color)', borderRadius: '12px', background: 'rgba(255,255,255,0.02)' }}>
+            <h4 style={{ margin: '0 0 8px', fontSize: '0.95rem' }}>Carte Résilience</h4>
+            <div style={{ display: 'grid', gap: '10px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Dette/actifs max (%)
+                <input type="number" min={0} max={100} value={healthGoals.maxDebtToAssetRatio} onChange={(e) => setHealthGoal('maxDebtToAssetRatio', Number(e.target.value))} style={inputStyle} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Mensualités dettes / revenus max (%)
+                <input type="number" min={0} max={100} value={healthGoals.maxDebtServiceToIncomeRatio} onChange={(e) => setHealthGoal('maxDebtServiceToIncomeRatio', Number(e.target.value))} style={inputStyle} />
+              </label>
+            </div>
+          </div>
+
+          <div style={{ padding: '14px', border: '1px solid var(--border-color)', borderRadius: '12px', background: 'rgba(255,255,255,0.02)' }}>
+            <h4 style={{ margin: '0 0 8px', fontSize: '0.95rem' }}>Carte Diversification</h4>
+            <div style={{ display: 'grid', gap: '10px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Zones géographiques min
+                <input type="number" min={1} max={12} value={healthGoals.minGeoBucketCount} onChange={(e) => setHealthGoal('minGeoBucketCount', Number(e.target.value))} style={inputStyle} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Secteurs min
+                <input type="number" min={1} max={20} value={healthGoals.minSectorBucketCount} onChange={(e) => setHealthGoal('minSectorBucketCount', Number(e.target.value))} style={inputStyle} />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {healthFeedback && (
+          <div style={{ marginTop: '12px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{healthFeedback}</div>
+        )}
       </div>
 
       {/* Overview KPIs */}

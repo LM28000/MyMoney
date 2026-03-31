@@ -1,12 +1,10 @@
 import { useState, useMemo, useEffect } from 'react'
-import type { BudgetAnalysis, BudgetOverrides, Transaction } from '../types'
+import type { BudgetAnalysis, Transaction } from '../types'
 import { formatCurrency } from '../lib/finance'
 import { api } from '../lib/api'
 
 type Props = {
   analysis: BudgetAnalysis | null
-  budgetOverrides: BudgetOverrides
-  onBudgetOverrideChange: (category: string, value: number | null) => void
 }
 
 const PARENT_COLORS: Record<string, string> = {
@@ -24,17 +22,14 @@ const PARENT_COLORS: Record<string, string> = {
 
 type Override = { category: string; categoryParent: string; supplier: string; note: string }
 
-export default function BudgetTab({ analysis, budgetOverrides, onBudgetOverrideChange }: Props) {
+export default function BudgetTab({ analysis }: Props) {
   const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null)
-  const [editingCategory, setEditingCategory] = useState<string | null>(null)
-  const [editValue, setEditValue] = useState<string>('')
   const [search, setSearch] = useState('')
   const [filterCategory, setFilterCategory] = useState<string>('all')
   const [filterDir, setFilterDir] = useState<'all' | 'income' | 'expense'>('all')
   const [overrides, setOverrides] = useState<Record<string, Override>>({})
   const [editingTxId, setEditingTxId] = useState<string | null>(null)
   const [editTx, setEditTx] = useState<Partial<Override>>({})
-  const [activeSection, setActiveSection] = useState<'transactions' | 'categories' | 'recurrents'>('categories')
 
   // Load existing overrides
   useEffect(() => {
@@ -103,12 +98,6 @@ export default function BudgetTab({ analysis, budgetOverrides, onBudgetOverrideC
   const incomeTotal = useMemo(() => transactions.filter(t => t.direction === 'income').reduce((s, t) => s + t.amount, 0), [transactions])
   const expenseTotal = useMemo(() => transactions.filter(t => t.direction === 'expense').reduce((s, t) => s + t.amount, 0), [transactions])
 
-  const tabStyle = (active: boolean): React.CSSProperties => ({
-    padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', transition: 'all 0.2s',
-    background: active ? 'linear-gradient(135deg,var(--accent-blue),var(--accent-purple))' : 'rgba(255,255,255,0.04)',
-    color: active ? '#fff' : 'var(--text-secondary)',
-  })
-
   return (
     <div className="tab-content">
       {/* Header */}
@@ -140,61 +129,7 @@ export default function BudgetTab({ analysis, budgetOverrides, onBudgetOverrideC
         ))}
       </div>
 
-      {/* Section Tabs */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-        <button style={tabStyle(activeSection === 'categories')} onClick={() => setActiveSection('categories')}>Enveloppes</button>
-        <button style={tabStyle(activeSection === 'transactions')} onClick={() => setActiveSection('transactions')}>Transactions</button>
-        <button style={tabStyle(activeSection === 'recurrents')} onClick={() => setActiveSection('recurrents')}>Récurrents</button>
-      </div>
-
-      {/* CATEGORIES */}
-      {activeSection === 'categories' && (
-        <div className="glass-panel" style={{ padding: '24px' }}>
-          <h3 style={{ margin: '0 0 20px', fontSize: '1rem', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Enveloppes Budgétaires</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {currentMonth.categories.map((cat) => {
-              const isEditing = editingCategory === cat.name
-              const hasOverride = budgetOverrides[cat.name] !== undefined
-              const pct = cat.suggestedBudget > 0 ? Math.min(100, (cat.amount / cat.suggestedBudget) * 100) : 0
-              const barColor = cat.status === 'over' ? 'var(--danger)' : cat.status === 'close' ? 'var(--warning)' : 'var(--success)'
-              const parentColor = PARENT_COLORS[cat.parent] ?? 'var(--accent-blue)'
-
-              return (
-                <div key={cat.name} style={{ display: 'grid', gridTemplateColumns: '200px 1fr 100px 100px 80px', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--border-color)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: parentColor, display: 'inline-block', flexShrink: 0 }} />
-                    <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>{cat.name}</span>
-                    {hasOverride && <span style={{ fontSize: '0.65rem', background: 'rgba(59,130,246,0.2)', color: 'var(--accent-blue)', padding: '1px 5px', borderRadius: '4px' }}>Manuel</span>}
-                  </div>
-                  <div style={{ position: 'relative', height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${pct}%`, background: barColor, borderRadius: '3px', transition: 'width 0.4s ease' }} />
-                  </div>
-                  <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.95rem' }}>{formatCurrency(cat.amount)}</div>
-                  <div style={{ textAlign: 'right', cursor: 'pointer' }}>
-                    {isEditing ? (
-                      <form onSubmit={e => { e.preventDefault(); const v = Number(editValue); if (!isNaN(v) && v >= 0) { onBudgetOverrideChange(cat.name, v); setEditingCategory(null) } }} style={{ display: 'flex', gap: '4px' }}>
-                        <input autoFocus type="number" value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={() => setEditingCategory(null)} style={{ width: '70px', padding: '3px 6px', fontSize: '0.8rem', background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'var(--text-primary)' }} />
-                        <button type="button" onClick={() => { onBudgetOverrideChange(cat.name, null); setEditingCategory(null) }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
-                      </form>
-                    ) : (
-                      <span onClick={() => { setEditingCategory(cat.name); setEditValue(String(cat.suggestedBudget)) }} style={{ opacity: 0.7, textDecoration: 'underline dotted', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>/ {formatCurrency(cat.suggestedBudget)}</span>
-                    )}
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <span style={{ fontSize: '0.8rem', padding: '3px 8px', borderRadius: '6px', fontWeight: 600, background: cat.status === 'over' ? 'rgba(239,68,68,0.15)' : cat.status === 'close' ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)', color: cat.status === 'over' ? 'var(--danger)' : cat.status === 'close' ? 'var(--warning)' : 'var(--success)' }}>
-                      {cat.status === 'over' ? 'Dépassé' : cat.status === 'close' ? 'Proche' : 'OK'}
-                    </span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* TRANSACTIONS */}
-      {activeSection === 'transactions' && (
-        <div>
+      <div>
           {/* Filters */}
           <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Rechercher…" style={{ flex: 1, minWidth: '200px', padding: '10px 14px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: '10px', color: 'var(--text-primary)', fontSize: '0.9rem' }} />
@@ -281,46 +216,6 @@ export default function BudgetTab({ analysis, budgetOverrides, onBudgetOverrideC
             </div>
           </div>
         </div>
-      )}
-
-      {/* RECURRENTS */}
-      {activeSection === 'recurrents' && (
-        <div className="glass-panel" style={{ padding: '24px' }}>
-          <h3 style={{ margin: '0 0 20px', fontSize: '1rem', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Dépenses Récurrentes Détectées</h3>
-          {analysis.recurringExpenses.length === 0 ? (
-            <p style={{ color: 'var(--text-muted)' }}>Aucune dépense récurrente détectée.</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {analysis.recurringExpenses.map((exp, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{exp.name}</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>{exp.category} • {exp.occurrences}x • {exp.cadence}</div>
-                  </div>
-                  <div style={{ fontWeight: 700, color: 'var(--danger)' }}>{formatCurrency(exp.amount)}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {currentMonth.anomalies.length > 0 && (
-            <>
-              <h3 style={{ margin: '28px 0 16px', fontSize: '1rem', color: 'var(--warning)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>⚠️ Anomalies Détectées</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {currentMonth.anomalies.map(anom => (
-                  <div key={anom.id} style={{ padding: '12px 16px', background: anom.severity === 'high' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)', border: `1px solid ${anom.severity === 'high' ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.2)'}`, borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{anom.label}</div>
-                      <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px' }}>{anom.merchant} • {anom.reason}</div>
-                    </div>
-                    <div style={{ fontWeight: 700, color: anom.severity === 'high' ? 'var(--danger)' : 'var(--warning)' }}>{formatCurrency(anom.amount)}</div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
     </div>
   )
 }

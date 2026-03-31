@@ -41,6 +41,16 @@ type Axis = {
   key: string
   label: string
   score: number
+  rawScore?: number
+  targetScore?: number
+  objectiveLabel?: string
+  objectiveMetric?: string
+  objectiveBreakdown?: Array<{
+    label: string
+    target: string
+    current: string
+    achievement: number
+  }>
   description: string
   detail?: LiquidityDetail | DiversificationDetail | PlacementDiversificationDetail
 }
@@ -372,8 +382,11 @@ export default function HealthScoreWidget({ backendStatus }: Props) {
         <div className="health-axes-grid">
           {data.axes.map((ax) => {
             const axColor = levelColor(ax.score)
-            const isClickable = ax.key === 'liquidity' || ax.key === 'diversification' || ax.key === 'placement-diversification'
+            const isClickable = true
             const isExpanded = expandedAxisKey === ax.key
+            const targetScore = typeof ax.targetScore === 'number' ? ax.targetScore : 100
+            const scoreDelta = ax.score - targetScore
+            const rawScore = typeof ax.rawScore === 'number' ? ax.rawScore : ax.score
             return (
               <div
                 key={ax.key}
@@ -401,6 +414,50 @@ export default function HealthScoreWidget({ backendStatus }: Props) {
                   />
                 </div>
                 <p className="health-axis-desc">{ax.description}</p>
+                <div className="health-axis-objective-strip">
+                  <span>{ax.objectiveLabel ?? `Objectif ${targetScore}/100`}</span>
+                  <strong className={scoreDelta >= 0 ? 'positive' : 'negative'}>
+                    {Math.round(ax.score)}%
+                  </strong>
+                </div>
+
+                {isExpanded && (
+                  <div className="health-axis-details-inline" onClick={(e) => e.stopPropagation()}>
+                    <div className="health-axis-objective-detail-grid">
+                      <div>
+                        <span>Atteinte objectif</span>
+                        <strong>{Math.round(ax.score)}%</strong>
+                      </div>
+                      <div>
+                        <span>Seuil objectif</span>
+                        <strong>{targetScore}%</strong>
+                      </div>
+                      <div>
+                        <span>Score mesure brute</span>
+                        <strong>{Math.round(rawScore)}/100</strong>
+                      </div>
+                      <div>
+                        <span>Indicateur</span>
+                        <strong>{ax.objectiveMetric ?? ax.description}</strong>
+                      </div>
+                    </div>
+                    {ax.objectiveBreakdown && ax.objectiveBreakdown.length > 0 && (
+                      <div className="health-axis-breakdown-list">
+                        {ax.objectiveBreakdown.map((item) => (
+                          <div key={item.label} className="health-axis-breakdown-row">
+                            <div>
+                              <span>{item.label}</span>
+                              <p>Cible: {item.target} · Actuel: {item.current}</p>
+                            </div>
+                            <strong className={item.achievement >= 100 ? 'positive' : 'negative'}>
+                              {Math.round(item.achievement)}%
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {isExpanded && ax.detail?.kind === 'liquidity' && (
                   <div className="health-axis-details-inline" onClick={(e) => e.stopPropagation()}>
