@@ -55,15 +55,20 @@ export default function GoalsTab() {
   const [healthGoals, setHealthGoals] = useState<HealthGoals>(defaultHealthGoals)
   const [savingHealthGoals, setSavingHealthGoals] = useState(false)
   const [healthFeedback, setHealthFeedback] = useState<string | null>(null)
+  const [emergencyFundMonthlyExpenses, setEmergencyFundMonthlyExpenses] = useState<number | null>(null)
+  const [emergencyFundMonthlyExpensesInput, setEmergencyFundMonthlyExpensesInput] = useState('')
 
   const load = async () => {
     setLoading(true)
-    const [goalsPayload, healthGoalsPayload] = await Promise.all([
+    const [goalsPayload, healthGoalsPayload, emergencyFundData] = await Promise.all([
       api.get<Goal[]>('/goals'),
       api.get<HealthGoals>('/health-goals').catch(() => defaultHealthGoals),
+      api.get<{ emergencyFundMonthlyExpenses: number | null }>('/emergency-fund').catch(() => ({ emergencyFundMonthlyExpenses: null })),
     ])
     setGoals(goalsPayload)
     setHealthGoals(healthGoalsPayload)
+    setEmergencyFundMonthlyExpenses(emergencyFundData.emergencyFundMonthlyExpenses)
+    setEmergencyFundMonthlyExpensesInput(emergencyFundData.emergencyFundMonthlyExpenses ? String(emergencyFundData.emergencyFundMonthlyExpenses) : '')
     setLoading(false)
   }
 
@@ -107,11 +112,24 @@ export default function GoalsTab() {
     setSavingHealthGoals(true)
     setHealthFeedback(null)
     try {
+      const parsedMonthlyExpenses = Number.parseFloat(emergencyFundMonthlyExpensesInput.replace(',', '.'))
+      const monthlyExpenses = Number.isFinite(parsedMonthlyExpenses) && parsedMonthlyExpenses > 0
+        ? parsedMonthlyExpenses
+        : null
+
+      // Save health goals
       const payload = await api.put<{ healthGoals: HealthGoals }>('/health-goals', healthGoals)
       setHealthGoals(payload.healthGoals)
-      setHealthFeedback('Objectifs de sante enregistres.')
+
+      // Save emergency fund monthly expenses
+      if (monthlyExpenses !== null || emergencyFundMonthlyExpenses !== null) {
+        await api.put('/emergency-fund', { monthlyExpenses })
+        setEmergencyFundMonthlyExpenses(monthlyExpenses)
+      }
+
+      setHealthFeedback('Paramètres enregistrés.')
     } catch {
-      setHealthFeedback('Impossible d enregistrer les objectifs pour le moment.')
+      setHealthFeedback('Impossible d\'enregistrer les paramètres pour le moment.')
     } finally {
       setSavingHealthGoals(false)
     }
@@ -162,10 +180,16 @@ export default function GoalsTab() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
           <div style={{ padding: '14px', border: '1px solid var(--border-color)', borderRadius: '12px', background: 'rgba(255,255,255,0.02)' }}>
             <h4 style={{ margin: '0 0 8px', fontSize: '0.95rem' }}>Carte Liquidité</h4>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              Liquidité cible (mois)
-              <input type="number" min={1} max={24} value={healthGoals.targetEmergencyFundMonths} onChange={(e) => setHealthGoal('targetEmergencyFundMonths', Number(e.target.value))} style={inputStyle} />
-            </label>
+            <div style={{ display: 'grid', gap: '10px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Liquidité cible (mois)
+                <input type="number" min={1} max={24} value={healthGoals.targetEmergencyFundMonths} onChange={(e) => setHealthGoal('targetEmergencyFundMonths', Number(e.target.value))} style={inputStyle} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Dépenses mensuelles (€)
+                <input type="number" min={0} step={10} value={emergencyFundMonthlyExpensesInput} onChange={(e) => setEmergencyFundMonthlyExpensesInput(e.target.value)} placeholder="Ex: 2500" style={inputStyle} />
+              </label>
+            </div>
           </div>
 
           <div style={{ padding: '14px', border: '1px solid var(--border-color)', borderRadius: '12px', background: 'rgba(255,255,255,0.02)' }}>
@@ -202,7 +226,7 @@ export default function GoalsTab() {
                 <input type="number" min={0} max={100} value={healthGoals.maxDebtToAssetRatio} onChange={(e) => setHealthGoal('maxDebtToAssetRatio', Number(e.target.value))} style={inputStyle} />
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Mensualités dettes / revenus max (%)
+                Mensualités dettes / dépenses configurées max (%)
                 <input type="number" min={0} max={100} value={healthGoals.maxDebtServiceToIncomeRatio} onChange={(e) => setHealthGoal('maxDebtServiceToIncomeRatio', Number(e.target.value))} style={inputStyle} />
               </label>
             </div>

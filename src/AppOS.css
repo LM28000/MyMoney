@@ -1047,34 +1047,65 @@
 
 .decision-panel {
   margin-bottom: 24px;
+  padding: 26px 28px;
 }
 
 .decision-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 
 .decision-card {
   padding: 18px;
-  border-radius: 20px;
+  padding-left: 20px;
+  border-radius: 14px;
   border: 1px solid var(--border-color);
-  background: rgba(255, 255, 255, 0.025);
+  border-left: 5px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.035);
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
+  overflow-wrap: break-word;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.decision-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+  transform: translateY(-2px);
 }
 
 .decision-high {
-  background: linear-gradient(180deg, rgba(239, 68, 68, 0.08), rgba(255, 255, 255, 0.02));
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(255, 255, 255, 0.03));
+  border-left-color: #ef4444;
+}
+
+.decision-high:hover {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(255, 255, 255, 0.05));
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.2);
 }
 
 .decision-medium {
-  background: linear-gradient(180deg, rgba(245, 158, 11, 0.08), rgba(255, 255, 255, 0.02));
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(255, 255, 255, 0.03));
+  border-left-color: #f59e0b;
+}
+
+.decision-medium:hover {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(255, 255, 255, 0.05));
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.2);
 }
 
 .decision-low {
-  background: linear-gradient(180deg, rgba(47, 108, 116, 0.08), rgba(255, 255, 255, 0.02));
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(255, 255, 255, 0.03));
+  border-left-color: #3b82f6;
+}
+
+.decision-low:hover {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.13), rgba(255, 255, 255, 0.05));
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.15);
 }
 
 .decision-card-header {
@@ -1085,16 +1116,22 @@
 .decision-impact-pill {
   display: inline-flex;
   align-items: center;
-  padding: 6px 10px;
-  border-radius: 999px;
-  font-size: 0.76rem;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-color);
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  letter-spacing: 0.02em;
 }
 
 .decision-card h4 {
   margin: 0;
   font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
 }
 
 .decision-card p {
@@ -1102,18 +1139,28 @@
   color: var(--text-secondary);
   line-height: 1.55;
   flex: 1;
+  font-size: 0.95rem;
 }
 
 .decision-card-button,
 .ai-brief-button {
   align-self: flex-start;
   border: none;
-  border-radius: 999px;
-  padding: 10px 14px;
+  border-radius: 8px;
+  padding: 10px 16px;
   background: linear-gradient(135deg, var(--accent-blue), var(--accent-copper));
   color: #fff;
   font-weight: 700;
+  font-size: 0.9rem;
   cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+}
+
+.decision-card-button:hover,
+.ai-brief-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.35);
 }
 
 .dashboard-strategy-grid {

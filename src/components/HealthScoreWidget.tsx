@@ -114,29 +114,18 @@ function LiquidityPopup({
   onSaved: () => void
 }) {
   const [targetMonthsInput, setTargetMonthsInput] = useState(String(detail.efTargetMonths))
-  const [monthlyExpensesInput, setMonthlyExpensesInput] = useState(
-    detail.efTargetMonths > 0 && detail.efTarget > 0
-      ? String(Math.round(detail.efTarget / detail.efTargetMonths))
-      : '',
-  )
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
 
   useEffect(() => {
     setTargetMonthsInput(String(detail.efTargetMonths))
-    setMonthlyExpensesInput(
-      detail.efTargetMonths > 0 && detail.efTarget > 0
-        ? String(Math.round(detail.efTarget / detail.efTargetMonths))
-        : '',
-    )
-  }, [detail.efTargetMonths, detail.efTarget])
+  }, [detail.efTargetMonths])
 
   const efPct = detail.efTarget > 0 ? Math.min(1, detail.efCurrent / detail.efTarget) : 0
   const efColor = efPct >= 1 ? 'var(--success)' : efPct >= 0.5 ? 'var(--warning)' : 'var(--danger)'
 
   const handleSave = async () => {
     const parsedMonths = Number.parseInt(targetMonthsInput, 10)
-    const parsedMonthlyExpenses = Number.parseFloat(monthlyExpensesInput.replace(',', '.'))
 
     const targetMonths = Number.isFinite(parsedMonths) && parsedMonths > 0 ? parsedMonths : null
     if (!targetMonths) {
@@ -144,16 +133,11 @@ function LiquidityPopup({
       return
     }
 
-    const monthlyExpenses = Number.isFinite(parsedMonthlyExpenses) && parsedMonthlyExpenses > 0
-      ? parsedMonthlyExpenses
-      : null
-
     setSaving(true)
     setFeedback(null)
     try {
       await api.put('/emergency-fund', {
         targetMonths,
-        monthlyExpenses,
       })
       setFeedback('Paramètres enregistrés.')
       onSaved()
@@ -201,17 +185,6 @@ function LiquidityPopup({
               onChange={(e) => setTargetMonthsInput(e.target.value)}
             />
           </label>
-          <label className="health-popup-setting-field">
-            Dépenses mensuelles (€)
-            <input
-              type="number"
-              min={0}
-              step={10}
-              value={monthlyExpensesInput}
-              onChange={(e) => setMonthlyExpensesInput(e.target.value)}
-              placeholder="Auto si vide"
-            />
-          </label>
         </div>
         <div className="health-popup-settings-actions">
           <button
@@ -223,6 +196,9 @@ function LiquidityPopup({
             {saving ? 'Enregistrement…' : 'Mettre à jour'}
           </button>
           {feedback && <span className="health-popup-feedback">{feedback}</span>}
+        </div>
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '12px', padding: '10px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
+          💡 Les dépenses mensuelles se configurent dans l'onglet Objectifs pour une meilleure organisation.
         </div>
       </section>
     </div>

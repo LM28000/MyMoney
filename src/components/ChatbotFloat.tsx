@@ -38,7 +38,7 @@ const HEALTH_GOAL_FIELD_LABELS: Record<string, string> = {
   maxSinglePositionShare: 'Position unique max (%)',
   maxTop3PositionsShare: 'Top 3 max (%)',
   maxDebtToAssetRatio: 'Dette/actifs max (%)',
-  maxDebtServiceToIncomeRatio: 'Mensualités/revenus max (%)',
+  maxDebtServiceToIncomeRatio: 'Mensualités/dépenses configurées max (%)',
   allocationDriftTolerance: 'Tolérance allocation (pts)',
   minAssetClassCount: 'Classes d actifs min',
   minGeoBucketCount: 'Zones géographiques min',

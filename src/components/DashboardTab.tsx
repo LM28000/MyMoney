@@ -319,76 +319,7 @@ export default function DashboardTab({
     .sort((left, right) => new Date(left.targetDate).getTime() - new Date(right.targetDate).getTime())
     .slice(0, 3)
 
-  const decisionItems: DecisionAction[] = []
-  const suggestionTarget = (category: string): DecisionAction['target'] => {
-    if (category === 'emergency-fund') return 'objectifs'
-    if (category === 'allocation') return 'comptes'
-    if (category === 'debt') return 'simulateurs'
-    return 'budget'
-  }
-
-  if (currentMonth && currentMonth.budgetGap < 0) {
-    decisionItems.push({
-      id: 'budget-gap',
-      title: 'Corriger la dérive du mois',
-      description: `Les dépenses de ${currentMonth.label} dépassent la cible sur les enveloppes suivies.`,
-      impact: `${formatCurrency(Math.abs(currentMonth.budgetGap))} à réabsorber pour revenir dans le cadre`,
-      tone: 'high',
-      ctaLabel: 'Ouvrir Flux & budget',
-      target: 'budget',
-    })
-  }
-
-  if (currentMonth && currentMonth.uncategorizedCount > 0) {
-    decisionItems.push({
-      id: 'uncategorized',
-      title: 'Nettoyer les opérations non classées',
-      description: `${currentMonth.uncategorizedCount} opération(s) restent ambiguës et brouillent la lecture du mois.`,
-      impact: `${formatCurrency(currentMonth.uncategorizedAmount)} à fiabiliser avant arbitrage`,
-      tone: 'medium',
-      ctaLabel: 'Catégoriser maintenant',
-      target: 'budget',
-    })
-  }
-
-  if (emergencyMissing > 0) {
-    decisionItems.push({
-      id: 'emergency-fund',
-      title: 'Compléter la réserve de sécurité',
-      description: `Le coussin de sécurité ne couvre pas encore ${emergencyFundTargetMonths} mois de dépenses.`,
-      impact: `${formatCurrency(emergencyMissing)} manquants pour atteindre la cible`,
-      tone: patrimony.emergencyFund.months < 3 ? 'high' : 'medium',
-      ctaLabel: 'Ajuster les comptes',
-      target: 'comptes',
-    })
-  }
-
-  if (liveInvestments?.alerts[0]) {
-    decisionItems.push({
-      id: 'investment-alert',
-      title: liveInvestments.alerts[0].title,
-      description: liveInvestments.alerts[0].description,
-      impact: 'Un rééquilibrage ciblé peut réduire le risque global du portefeuille',
-      tone: liveInvestments.alerts[0].severity,
-      ctaLabel: 'Analyser les positions',
-      target: 'comptes',
-    })
-  }
-
-  suggestions
-    .slice(0, 4)
-    .forEach((suggestion) => {
-      decisionItems.push({
-        id: suggestion.id,
-        title: suggestion.title,
-        description: suggestion.description,
-        impact: suggestion.actionableAdvice,
-        tone: suggestion.priority,
-        ctaLabel: suggestion.category === 'allocation' ? 'Analyser les positions' : 'Traiter le sujet',
-        target: suggestionTarget(suggestion.category),
-      })
-    })
-
+  // Helper functions for health-based recommendations
   const healthAxisToTarget = (axisKey: string): DecisionAction['target'] => {
     if (axisKey === 'resilience') return 'simulateurs'
     if (axisKey === 'placement-diversification' || axisKey === 'diversification') return 'patrimoine'
@@ -401,39 +332,62 @@ export default function DashboardTab({
     return 'Ajuster les objectifs'
   }
 
-  healthScore?.axes
-    .filter((axis) => axis.score < 85)
-    .slice(0, 3)
-    .forEach((axis) => {
+  const getRecommendationDetail = (axisKey: string): string => {
+    switch (axisKey) {
+      case 'liquidity':
+        return 'Augmentez votre fonds de roulement mensuel en accumulant dans vos livrets d\'épargne pour atteindre le coussin de crise recommandé.'
+      case 'placement-diversification':
+        return 'Variiez vos supports d\'investissement (PEA, assurance-vie, CTO) pour déployer vos actifs sur plusieurs produits plutôt que concentrés dans un seul.'
+      case 'resilience':
+        return 'Réduisez votre endettement en priorisant le remboursement des crédits les plus coûteux, ou renforcez votre base d\'actifs liquides.'
+      case 'diversification':
+        return 'Équilibrez votre portefeuille d\'investissement entre géographies, secteurs, et types de placements pour limiter la concentration du risque.'
+      default:
+        return 'Alignez votre situation avec les objectifs de santé financière configurés.'
+    }
+  }
+
+  // Generate decision items ONLY from health score axes
+  const decisionItems: DecisionAction[] = []
+
+  if (healthScore?.axes) {
+    // Filter low-scoring axes (< 85) and sort by severity
+    const lowScoringAxes = healthScore.axes
+      .filter((axis) => axis.score < 85)
+      .sort((a, b) => {
+        if (a.score < 70 && b.score >= 70) return -1 // high priority first
+        if (a.score >= 70 && b.score < 70) return 1
+        return a.score - b.score // then by numeric score
+      })
+
+    // Create a recommendation for each low-scoring axis
+    lowScoringAxes.forEach((axis) => {
       decisionItems.push({
         id: `health-axis-${axis.key}`,
-        title: `Score santé faible: ${axis.label}`,
-        description: axis.description,
-        impact: `${Math.round(axis.score)}/100 actuellement`,
-        tone: axis.score < 70 ? 'high' : 'medium',
+        title: `${axis.label}`,
+        description: getRecommendationDetail(axis.key),
+        impact: `Score: ${Math.round(axis.score)}/100`,
+        tone: axis.score < 70 ? 'high' : axis.score < 85 ? 'medium' : 'low',
         ctaLabel: healthAxisToCta(axis.key),
         target: healthAxisToTarget(axis.key),
       })
     })
+  }
 
-  if (nearestGoals[0]) {
-    const nextGoal = nearestGoals[0]
-    const remaining = Math.max(0, nextGoal.targetAmount - nextGoal.currentAmount)
+  // If no low-scoring axes, provide a default positive message
+  if (decisionItems.length === 0) {
     decisionItems.push({
-      id: `goal-${nextGoal.id}`,
-      title: `Sécuriser l'objectif ${nextGoal.name}`,
-      description: `Le prochain jalon arrive dans ${Math.max(0, daysUntil(nextGoal.targetDate))} jours.`,
-      impact: `${formatCurrency(remaining)} restent à financer`,
-      tone: daysUntil(nextGoal.targetDate) <= 45 ? 'high' : 'low',
-      ctaLabel: 'Revoir le plan',
-      target: 'objectifs',
+      id: 'health-status-excellent',
+      title: 'Situation financière excellente',
+      description: 'Tous vos scores de santé sont alignés avec vos objectifs. Continuez à surveiller les tendances et à vous adapter selon votre évolution.',
+      impact: `Score global: ${healthScore?.globalScore ?? 'N/A'}/100`,
+      tone: 'low',
+      ctaLabel: 'Consulter le détail',
+      target: 'patrimoine',
     })
   }
 
-  const toneWeight: Record<DecisionAction['tone'], number> = { high: 3, medium: 2, low: 1 }
-  const topDecisionItems = [...decisionItems]
-    .sort((left, right) => toneWeight[right.tone] - toneWeight[left.tone])
-    .slice(0, 5)
+  const topDecisionItems = decisionItems.slice(0, 5)
   const bourseTotal =
     (mergedAssetsByProductType['assurance-vie'] ?? 0) +
     (mergedAssetsByProductType.pea ?? 0) +

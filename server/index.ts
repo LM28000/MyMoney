@@ -4485,9 +4485,8 @@ app.get('/api/health-score', async (_request, response) => {
   const resilienceObjectiveAchievement = debtToAsset <= maxDebtRatioTarget || debtToAsset === 0
     ? 100
     : Math.max(0, Math.min(100, (maxDebtRatioTarget / debtToAsset) * 100))
-  const latestMonthKey = analysis?.months?.[0]?.key
-  const latestMonthIncome = latestMonthKey ? (analysis?.monthly[latestMonthKey]?.income ?? 0) : 0
-  const monthlyIncomeReference = latestMonthIncome > 0 ? latestMonthIncome : state.emergencyFundMonthlyExpenses ?? 0
+  // Use configured monthly expenses for debt service ratio calculation
+  const monthlyIncomeReference = state.emergencyFundMonthlyExpenses ?? 0
   const debtServiceToIncomeRatio = monthlyIncomeReference > 0 ? totalDebtMonthlyPayment / monthlyIncomeReference : 0
   const maxDebtServiceTarget = state.healthGoals.maxDebtServiceToIncomeRatio / 100
   const debtServiceObjectiveAchievement = totalDebtMonthlyPayment <= 0 || debtServiceToIncomeRatio <= maxDebtServiceTarget
@@ -4527,7 +4526,7 @@ app.get('/api/health-score', async (_request, response) => {
     ? diversificationAnalysis.score
     : Math.min(100, investmentTypes.length * 22)
 
-  const internalDiversificationTargetScore = 70
+  const internalDiversificationTargetScore = 85
 
   const totalMarketValue = marketPositionsForDetail.reduce((sum, position) => sum + position.currentValue, 0)
   const enrichedSectorBuckets = await buildAutoSectorBuckets(marketPositionsForDetail, totalMarketValue)
@@ -4565,9 +4564,8 @@ app.get('/api/health-score', async (_request, response) => {
   )
 
   const diversificationObjectiveAchievement = Math.round(
-    scoreTargetAchievement * 0.5 +
-      geoTargetAchievement * 0.25 +
-      sectorTargetAchievement * 0.25,
+    geoTargetAchievement * 0.5 +
+      sectorTargetAchievement * 0.5,
   )
 
   const diversificationDetail = {
@@ -4651,8 +4649,8 @@ app.get('/api/health-score', async (_request, response) => {
       score: Math.round(resilienceAchievement),
       rawScore: Math.round(resilienceRawScore),
       targetScore: 100,
-      objectiveLabel: `Cibles: dette/actifs <= ${state.healthGoals.maxDebtToAssetRatio.toFixed(0)}%, mensualités/revenus <= ${state.healthGoals.maxDebtServiceToIncomeRatio.toFixed(0)}%`,
-      objectiveMetric: `Actuel: dette/actifs ${(debtToAsset * 100).toFixed(1)}%, mensualités/revenus ${(debtServiceToIncomeRatio * 100).toFixed(1)}%`,
+      objectiveLabel: `Cibles: dette/actifs <= ${state.healthGoals.maxDebtToAssetRatio.toFixed(0)}%, mensualités/dépenses configurées <= ${state.healthGoals.maxDebtServiceToIncomeRatio.toFixed(0)}%`,
+      objectiveMetric: `Actuel: dette/actifs ${(debtToAsset * 100).toFixed(1)}%, mensualités/dépenses configurées ${monthlyIncomeReference > 0 ? debtServiceToIncomeRatio > 1 ? ">100%" : (debtServiceToIncomeRatio * 100).toFixed(1) : "Dépenses mensuelles non configurées"}${monthlyIncomeReference > 0 ? "%" : ""}`,
       objectiveBreakdown: [
         {
           label: 'Ratio dette / actifs',
@@ -4661,9 +4659,9 @@ app.get('/api/health-score', async (_request, response) => {
           achievement: resilienceObjectiveAchievement,
         },
         {
-          label: 'Mensualités dettes / revenus',
+          label: 'Mensualités dettes / dépenses configurées',
           target: `<= ${state.healthGoals.maxDebtServiceToIncomeRatio.toFixed(0)}%`,
-          current: `${(debtServiceToIncomeRatio * 100).toFixed(1)}%`,
+          current: monthlyIncomeReference > 0 ? debtServiceToIncomeRatio > 1 ? '>100%' : `${(debtServiceToIncomeRatio * 100).toFixed(1)}%` : 'Dépenses mensuelles non configurées',
           achievement: debtServiceObjectiveAchievement,
         },
       ],
@@ -4675,15 +4673,9 @@ app.get('/api/health-score', async (_request, response) => {
       score: Math.round(diversificationObjectiveAchievement),
       rawScore: Math.round(finalDiversificationScore),
       targetScore: 100,
-      objectiveLabel: `Cibles: score interne >= ${internalDiversificationTargetScore}/100, geo >= ${state.healthGoals.minGeoBucketCount}, secteurs >= ${state.healthGoals.minSectorBucketCount}`,
-      objectiveMetric: `Actuel: score ${Math.round(finalDiversificationScore)}/100, geo ${geoCount}, secteurs ${sectorCount}`,
+      objectiveLabel: `Cibles: géographie >= ${state.healthGoals.minGeoBucketCount} zones, secteurs >= ${state.healthGoals.minSectorBucketCount}`,
+      objectiveMetric: `Actuel: géographie ${geoCount} zones, secteurs ${sectorCount}`,
       objectiveBreakdown: [
-        {
-          label: 'Score diversification',
-          target: `>= ${internalDiversificationTargetScore}/100`,
-          current: `${Math.round(finalDiversificationScore)}/100`,
-          achievement: scoreTargetAchievement,
-        },
         {
           label: 'Diversification géographique',
           target: `>= ${state.healthGoals.minGeoBucketCount}`,
