@@ -182,6 +182,7 @@ export type MonthOption = {
 
 export type ProductType =
   | 'checking'       // Compte courant
+  | 'credit'         // Crédit / prêt
   | 'livret-a'       // Livret A
   | 'livret-jeune'   // Livret Jeune
   | 'lep'            // LEP
@@ -307,3 +308,17 @@ export type BudgetAnalysis = {
     balance: number | null
   }>
 }
+
+// ─── Boursorama Integration ──────────────────────────────────────────────────
+
+export type {
+  BoursoAccount,
+  BoursoAccountKind,
+  OrderSide,
+  TradeOrder,
+  TradeOrderResult,
+  Transfer,
+  TransferResult,
+  Quote,
+  BoursoAction,
+} from './types-bourso'

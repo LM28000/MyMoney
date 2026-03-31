@@ -31,6 +31,7 @@ type Props = {
 }
 
 export default function ImportsTab({ imports, analysis, backendStatus, onImport }: Props) {
+  void onImport
   const [overrides, setOverrides] = useState<SymbolOverride[]>([])
   const [loadingOverrides, setLoadingOverrides] = useState(false)
   const [overrideName, setOverrideName] = useState('')
@@ -72,23 +73,6 @@ export default function ImportsTab({ imports, analysis, backendStatus, onImport 
     void loadSymbolOverrides()
   }, [backendStatus])
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    const text = await file.text()
-    try {
-      await api.post('/import', {
-        fileName: file.name,
-        csvText: text,
-        accountLabel: file.name.split('-')[0] || 'Imported',
-      })
-      onImport()
-    } catch (error) {
-      alert('Erreur lors de l\'import')
-    }
-  }
-
   const handleSaveOverride = async () => {
     const name = overrideName.trim()
     const symbol = overrideSymbol.trim().toUpperCase()
@@ -128,22 +112,15 @@ export default function ImportsTab({ imports, analysis, backendStatus, onImport 
         <h2>🏦 Gestion de Vos Comptes Bancaires</h2>
       </div>
 
-      {/* Upload Section */}
+      {/* Bourso-only mode */}
       <div className="section upload-section">
-        <h3>📤 Importer un Nouveau Compte</h3>
+        <h3>🔄 Synchronisation des comptes</h3>
         <div className="upload-box">
-          <label className="upload-label">
-            <input
-              type="file"
-              accept=".csv"
-              onChange={handleFileUpload}
-              disabled={backendStatus !== 'online'}
-              style={{ display: 'none' }}
-            />
+          <div className="upload-label">
             <span className="upload-text">
-              📁 Cliquez ou déposez un CSV (BoursoBank, BNP, etc)
+              Mode Bourso uniquement actif: les imports CSV sont désactivés. Utilise le bouton "Sync comptes" dans la section Actions Bourso.
             </span>
-          </label>
+          </div>
         </div>
       </div>
 

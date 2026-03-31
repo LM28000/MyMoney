@@ -1,11 +1,18 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { api, ApiError } from '../lib/api'
+import { apiBourso } from '../lib/api-bourso'
 import { formatCurrency } from '../lib/finance'
 import CsvMappingDialog from './CsvMappingDialog'
+import { BoursoTransferModal } from './BoursoTransferModal'
+import { BoursoTradeModal } from './BoursoTradeModal'
+import { BoursoActionsWidget } from './BoursoActionsWidget'
+import { ErrorBoundary } from './ErrorBoundary'
+import type { BoursoAccount } from '../types-bourso'
 
 export type ProductType =
   | 'checking'
+  | 'credit'
   | 'livret-a'
   | 'livret-jeune'
   | 'lep'
@@ -36,6 +43,8 @@ export type CryptoHolding = {
   name?: string
   quantity?: number
   averageBuyPrice?: number
+  walletAddress?: string
+  walletNetwork?: 'bitcoin' | 'ethereum'
 }
 
 export type Account = {
@@ -68,6 +77,8 @@ type NewAccountForm = {
   productType: ProductType
   institution: string
   manualBalance: string
+  cryptoWalletAddress: string
+  cryptoWalletNetwork: 'bitcoin' | 'ethereum'
   cryptoName: string
   cryptoSymbol: string
   cryptoQuantity: string
@@ -78,6 +89,7 @@ type NewAccountForm = {
 
 const PRODUCT_LABELS: Record<ProductType, string> = {
   checking: '🏦 Compte courant',
+  credit: '💳 Crédit',
   'livret-a': '💚 Livret A',
   'livret-jeune': '💚 Livret Jeune',
   lep: '💚 LEP',
@@ -100,6 +112,8 @@ const emptyForm: NewAccountForm = {
   productType: 'checking',
   institution: '',
   manualBalance: '',
+  cryptoWalletAddress: '',
+  cryptoWalletNetwork: 'bitcoin',
   cryptoName: '',
   cryptoSymbol: '',
   cryptoQuantity: '',
@@ -120,19 +134,26 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState<NewAccountForm>(emptyForm)
   const [creating, setCreating] = useState(false)
+  const [resolvingCreateCryptoAddress, setResolvingCreateCryptoAddress] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [uploadingFor, setUploadingFor] = useState<string | null>(null)
   const [editingNameId, setEditingNameId] = useState<string | null>(null)
   const [editingNameValue, setEditingNameValue] = useState('')
   const [editingCryptoId, setEditingCryptoId] = useState<string | null>(null)
+  const [syncingCryptoAddressId, setSyncingCryptoAddressId] = useState<string | null>(null)
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | null>(null)
   const [cryptoDraft, setCryptoDraft] = useState({
     name: '',
     symbol: '',
     quantity: '',
     averageBuyPrice: '',
+    walletAddress: '',
+    walletNetwork: 'bitcoin' as 'bitcoin' | 'ethereum',
   })
   const [csvMapping, setCsvMapping] = useState<{ accountId: string; fileName: string; csvText: string; productType: ProductType } | null>(null)
+  const [showBoursoTransfer, setShowBoursoTransfer] = useState(false)
+  const [showBoursoTrade, setShowBoursoTrade] = useState(false)
+  const [boursoAccounts, setBoursoAccounts] = useState<BoursoAccount[]>([])
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   const isOnline = backendStatus === 'online'
@@ -156,6 +177,8 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
       symbol: account.cryptoHolding?.symbol ?? '',
       quantity: account.cryptoHolding?.quantity !== undefined ? String(account.cryptoHolding.quantity) : '',
       averageBuyPrice: account.cryptoHolding?.averageBuyPrice !== undefined ? String(account.cryptoHolding.averageBuyPrice) : '',
+      walletAddress: account.cryptoHolding?.walletAddress ?? '',
+      walletNetwork: account.cryptoHolding?.walletNetwork ?? 'bitcoin',
     })
   }
 
@@ -175,12 +198,61 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
           symbol: cryptoDraft.symbol.trim() || undefined,
           quantity,
           averageBuyPrice,
+          walletAddress: cryptoDraft.walletAddress.trim() || undefined,
+          walletNetwork: cryptoDraft.walletAddress.trim() ? cryptoDraft.walletNetwork : undefined,
         },
       })
       setEditingCryptoId(null)
       onRefresh()
     } catch (error) {
       alert(error instanceof ApiError ? error.message : 'Erreur lors de la mise à jour crypto')
+    }
+  }
+
+  const handleImportCryptoAddress = async (accountId: string) => {
+    const address = cryptoDraft.walletAddress.trim()
+    if (!address) {
+      alert('Renseignez une adresse de wallet.')
+      return
+    }
+
+    const averageBuyPrice = Number(cryptoDraft.averageBuyPrice)
+
+    setSyncingCryptoAddressId(accountId)
+    try {
+      const response = await api.post<{
+        account: { cryptoHolding?: CryptoHolding }
+        imported: { quantity: number }
+      }>(`/accounts/${accountId}/crypto/address-import`, {
+        address,
+        network: cryptoDraft.walletNetwork,
+        averageBuyPrice:
+          Number.isFinite(averageBuyPrice) && averageBuyPrice > 0
+            ? averageBuyPrice
+            : undefined,
+      })
+
+      const holding = response.account.cryptoHolding
+      if (holding) {
+        setCryptoDraft((current) => ({
+          ...current,
+          name: holding.name ?? current.name,
+          symbol: holding.symbol ?? current.symbol,
+          quantity: holding.quantity !== undefined ? String(holding.quantity) : current.quantity,
+          averageBuyPrice:
+            holding.averageBuyPrice !== undefined
+              ? String(holding.averageBuyPrice)
+              : current.averageBuyPrice,
+          walletAddress: holding.walletAddress ?? current.walletAddress,
+          walletNetwork: holding.walletNetwork ?? current.walletNetwork,
+        }))
+      }
+
+      onRefresh()
+    } catch (error) {
+      alert(error instanceof ApiError ? error.message : 'Impossible de récupérer cette adresse crypto')
+    } finally {
+      setSyncingCryptoAddressId(null)
     }
   }
 
@@ -200,10 +272,18 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
         manualBalance: form.manualBalance ? Number(form.manualBalance) : undefined,
         cryptoHolding: isCryptoForm
           ? {
+              coinId:
+                form.cryptoWalletNetwork === 'bitcoin'
+                  ? 'bitcoin'
+                  : form.cryptoWalletNetwork === 'ethereum'
+                    ? 'ethereum'
+                    : undefined,
               name: form.cryptoName.trim(),
               symbol: form.cryptoSymbol.trim() || undefined,
               quantity: Number(form.cryptoQuantity),
               averageBuyPrice: Number(form.cryptoAverageBuyPrice),
+              walletAddress: form.cryptoWalletAddress.trim() || undefined,
+              walletNetwork: form.cryptoWalletAddress.trim() ? form.cryptoWalletNetwork : undefined,
             }
           : undefined,
         kind: form.kind,
@@ -216,6 +296,40 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
       alert(error instanceof ApiError ? error.message : 'Erreur lors de la création')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleResolveCreateCryptoAddress = async () => {
+    const address = form.cryptoWalletAddress.trim()
+    if (!address) {
+      alert('Renseignez une adresse wallet.')
+      return
+    }
+
+    setResolvingCreateCryptoAddress(true)
+    try {
+      const response = await api.post<{
+        quantity: number
+        symbol: string
+        name: string
+        coinId: string
+        network: 'bitcoin' | 'ethereum'
+      }>('/crypto/address/resolve', {
+        address,
+        network: form.cryptoWalletNetwork,
+      })
+
+      setForm((current) => ({
+        ...current,
+        cryptoName: response.name || current.cryptoName,
+        cryptoSymbol: response.symbol || current.cryptoSymbol,
+        cryptoQuantity: String(response.quantity),
+        cryptoWalletNetwork: response.network,
+      }))
+    } catch (error) {
+      alert(error instanceof ApiError ? error.message : 'Impossible de récupérer cette adresse')
+    } finally {
+      setResolvingCreateCryptoAddress(false)
     }
   }
 
@@ -311,6 +425,20 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
     { label: 'Investissements', value: investments.reduce((sum, account) => sum + account.balance, 0) },
   ]
 
+  const loadLastBoursoAccounts = async () => {
+    try {
+      const response = await apiBourso.getLastSyncedAccounts()
+      setBoursoAccounts(response.accounts)
+    } catch {
+      setBoursoAccounts([])
+    }
+  }
+
+  useEffect(() => {
+    if (!showBoursoTransfer && !showBoursoTrade) return
+    void loadLastBoursoAccounts()
+  }, [showBoursoTransfer, showBoursoTrade])
+
   return (
     <div className="tab-content">
       <div className="section-header-row" style={{ marginBottom: '28px' }}>
@@ -318,13 +446,35 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
           <h2 style={{ fontSize: '2rem', margin: '0 0 6px', fontWeight: 800 }}>Comptes & Investissements</h2>
           <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Gérez vos comptes, exports CSV et paramètres crypto.</p>
         </div>
-        <button
-          className="btn-primary"
-          onClick={() => setShowCreate((current) => !current)}
-          style={{ padding: '10px 18px', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 700, background: 'linear-gradient(135deg,var(--accent-blue),var(--accent-purple))' }}
-        >
-          {showCreate ? 'Fermer' : 'Nouveau compte'}
-        </button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            className="btn-primary"
+            onClick={() => {
+              console.log('[AccountsTab] Virement button clicked')
+              setShowBoursoTransfer(true)
+            }}
+            style={{ padding: '10px 18px', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 700, background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}
+          >
+            💸 Virement
+          </button>
+          <button
+            className="btn-primary"
+            onClick={() => {
+              console.log('[AccountsTab] Trading button clicked')
+              setShowBoursoTrade(true)
+            }}
+            style={{ padding: '10px 18px', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 700, background: 'linear-gradient(135deg, #10b981, #059669)' }}
+          >
+            📈 Trading
+          </button>
+          <button
+            className="btn-primary"
+            onClick={() => setShowCreate((current) => !current)}
+            style={{ padding: '10px 18px', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 700, background: 'linear-gradient(135deg,var(--accent-blue),var(--accent-purple))' }}
+          >
+            {showCreate ? 'Fermer' : 'Nouveau compte'}
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '24px' }}>
@@ -350,6 +500,7 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
                   <option value="checking">Compte courant</option>
                   <option value="livret-a">Livret A</option>
                   <option value="livret-jeune">Livret Jeune</option>
+                   <option value="credit">Crédit</option>
                   <option value="lep">LEP</option>
                   <option value="ldds">LDDS</option>
                   <option value="livret-other">Autre livret</option>
@@ -378,6 +529,22 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
             </div>
             {isCryptoForm && (
               <>
+                <div className="form-field">
+                  <label>Réseau wallet</label>
+                  <select value={form.cryptoWalletNetwork} onChange={(event) => setForm((current) => ({ ...current, cryptoWalletNetwork: event.target.value as 'bitcoin' | 'ethereum' }))}>
+                    <option value="bitcoin">Bitcoin (BTC)</option>
+                    <option value="ethereum">Ethereum (ETH)</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>Adresse wallet</label>
+                  <input type="text" value={form.cryptoWalletAddress} placeholder="bc1... ou 0x..." onChange={(event) => setForm((current) => ({ ...current, cryptoWalletAddress: event.target.value }))} />
+                </div>
+                <div className="form-field" style={{ alignSelf: 'end' }}>
+                  <button className="btn-secondary" type="button" onClick={() => void handleResolveCreateCryptoAddress()} disabled={resolvingCreateCryptoAddress || !form.cryptoWalletAddress.trim()}>
+                    {resolvingCreateCryptoAddress ? 'Import…' : 'Importer depuis adresse'}
+                  </button>
+                </div>
                 <div className="form-field">
                   <label>Crypto *</label>
                   <input type="text" value={form.cryptoName} onChange={(event) => setForm((current) => ({ ...current, cryptoName: event.target.value }))} />
@@ -502,20 +669,24 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
                     <div className="account-card-detail">
                       <div className="account-detail-section">
                         <h4>📤 Ajouter un export CSV</h4>
-                        <label className="btn-upload-file" style={{ opacity: isOnline ? 1 : 0.5 }}>
-                          <input
-                            ref={(element) => { fileRefs.current[account.id] = element }}
-                            type="file"
-                            accept=".csv"
-                            style={{ display: 'none' }}
-                            disabled={!isOnline || uploadingFor === account.id}
-                            onChange={(event) => {
-                              const file = event.target.files?.[0]
-                              if (file) void handleUploadCsv(account.id, file)
-                            }}
-                          />
-                          {uploadingFor === account.id ? '⏳ Import…' : '📁 Choisir un CSV'}
-                        </label>
+                        {account.id.startsWith('bourso-') ? (
+                          <p className="section-info" style={{ margin: 0 }}>Compte synchronisé Bourso: import CSV désactivé.</p>
+                        ) : (
+                          <label className="btn-upload-file" style={{ opacity: isOnline ? 1 : 0.5 }}>
+                            <input
+                              ref={(element) => { fileRefs.current[account.id] = element }}
+                              type="file"
+                              accept=".csv"
+                              style={{ display: 'none' }}
+                              disabled={!isOnline || uploadingFor === account.id}
+                              onChange={(event) => {
+                                const file = event.target.files?.[0]
+                                if (file) void handleUploadCsv(account.id, file)
+                              }}
+                            />
+                            {uploadingFor === account.id ? '⏳ Import…' : '📁 Choisir un CSV'}
+                          </label>
+                        )}
                       </div>
 
                       {account.productType === 'crypto' && account.cryptoHolding && (
@@ -538,11 +709,31 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
                               <span className="crypto-config-label">Prix d'achat moyen</span>
                               {editingCryptoId === account.id ? <input type="number" min="0" step="0.01" value={cryptoDraft.averageBuyPrice} onChange={(event) => setCryptoDraft((draft) => ({ ...draft, averageBuyPrice: event.target.value }))} /> : <span className="crypto-config-value">{account.cryptoHolding.averageBuyPrice !== undefined ? formatCurrency(account.cryptoHolding.averageBuyPrice) : '—'}</span>}
                             </div>
+                            <div className="crypto-config-item">
+                              <span className="crypto-config-label">Réseau wallet</span>
+                              {editingCryptoId === account.id ? (
+                                <select value={cryptoDraft.walletNetwork} onChange={(event) => setCryptoDraft((draft) => ({ ...draft, walletNetwork: event.target.value as 'bitcoin' | 'ethereum' }))}>
+                                  <option value="bitcoin">Bitcoin (BTC)</option>
+                                  <option value="ethereum">Ethereum (ETH)</option>
+                                </select>
+                              ) : (
+                                <span className="crypto-config-value">
+                                  {account.cryptoHolding.walletNetwork === 'ethereum' ? 'Ethereum' : account.cryptoHolding.walletNetwork === 'bitcoin' ? 'Bitcoin' : '—'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="crypto-config-item">
+                              <span className="crypto-config-label">Adresse wallet</span>
+                              {editingCryptoId === account.id ? <input type="text" value={cryptoDraft.walletAddress} onChange={(event) => setCryptoDraft((draft) => ({ ...draft, walletAddress: event.target.value }))} placeholder="bc1... ou 0x..." /> : <span className="crypto-config-value">{account.cryptoHolding.walletAddress ?? '—'}</span>}
+                            </div>
                           </div>
                           <div className="crypto-config-actions">
                             {editingCryptoId === account.id ? (
                               <>
                                 <button className="btn-secondary" onClick={() => setEditingCryptoId(null)}>Annuler</button>
+                                <button className="btn-secondary" onClick={() => void handleImportCryptoAddress(account.id)} disabled={syncingCryptoAddressId === account.id}>
+                                  {syncingCryptoAddressId === account.id ? 'Sync…' : 'Importer adresse'}
+                                </button>
                                 <button className="btn-primary" onClick={() => handleSaveCrypto(account.id)}>Enregistrer</button>
                               </>
                             ) : (
@@ -594,6 +785,26 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
           onCancel={() => setCsvMapping(null)}
         />
       )}
+
+      <div style={{ marginTop: '32px' }}>
+        <ErrorBoundary>
+          <BoursoActionsWidget onRefresh={onRefresh} />
+        </ErrorBoundary>
+      </div>
+
+      <BoursoTransferModal
+        isOpen={showBoursoTransfer}
+        onClose={() => setShowBoursoTransfer(false)}
+        accounts={boursoAccounts}
+        onSuccess={onRefresh}
+      />
+
+      <BoursoTradeModal
+        isOpen={showBoursoTrade}
+        onClose={() => setShowBoursoTrade(false)}
+        accounts={boursoAccounts}
+        onSuccess={onRefresh}
+      />
     </div>
   )
 }

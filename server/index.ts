@@ -38,6 +38,7 @@ import { env } from './env'
 import { errorHandler, notFoundHandler } from './http'
 import { logger } from './logger'
 import { registerCrudRoutes } from './routes/crud'
+import { boursoRouter } from './routes/bourso'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -72,6 +73,8 @@ type CryptoHolding = {
   name?: string
   quantity?: number
   averageBuyPrice?: number
+  walletAddress?: string
+  walletNetwork?: 'bitcoin' | 'ethereum'
 }
 
 type ParsedAccountOperation = {
@@ -85,6 +88,18 @@ type ParsedAccountOperation = {
 
 // A "compte" is the canonical entity the user manages.
 // It can have CSV exports attached (StoredImport[]).
+type StoredBoursoPosition = {
+  symbol?: string
+  name: string
+  isin?: string
+  quantity: number
+  buyingPrice: number
+  lastPrice: number
+  currentValue: number
+  amountVariation?: number
+  variation?: number
+}
+
 type StoredAccount = {
   id: string
   name: string            // e.g. "Livret A Bourso"
@@ -94,7 +109,8 @@ type StoredAccount = {
   cryptoHolding?: CryptoHolding
   notes?: string
   isEligibleEmergencyFund: boolean  // auto true for livrets
-  csvImports: StoredImport[]          // ordered by uploadedAt desc  
+  csvImports: StoredImport[]          // ordered by uploadedAt desc
+  boursoPositions?: StoredBoursoPosition[]
   kind: 'asset' | 'debt'
 }
 
@@ -388,6 +404,20 @@ const readStore = (): StoredState => {
       accounts: (parsed.accounts ?? []).map((a) => ({
         ...a,
         csvImports: (a.csvImports ?? []).map((imp) => ({ ...imp, isActive: imp.isActive ?? true })),
+        boursoPositions: Array.isArray((a as any).boursoPositions)
+          ? (a as any).boursoPositions
+              .filter((row: any) => row && typeof row.name === 'string')
+              .map((row: any) => ({
+                name: row.name,
+                isin: typeof row.isin === 'string' ? row.isin : undefined,
+                quantity: Number.isFinite(row.quantity) ? Number(row.quantity) : 0,
+                buyingPrice: Number.isFinite(row.buyingPrice) ? Number(row.buyingPrice) : 0,
+                lastPrice: Number.isFinite(row.lastPrice) ? Number(row.lastPrice) : 0,
+                currentValue: Number.isFinite(row.currentValue) ? Number(row.currentValue) : 0,
+                amountVariation: Number.isFinite(row.amountVariation) ? Number(row.amountVariation) : 0,
+                variation: Number.isFinite(row.variation) ? Number(row.variation) : 0,
+              }))
+          : undefined,
         cryptoHolding: a.cryptoHolding
           ? {
               coinId: a.cryptoHolding.coinId,
@@ -401,6 +431,11 @@ const readStore = (): StoredState => {
                 typeof a.cryptoHolding.averageBuyPrice === 'number' && Number.isFinite(a.cryptoHolding.averageBuyPrice)
                   ? a.cryptoHolding.averageBuyPrice
                   : undefined,
+              walletAddress:
+                typeof a.cryptoHolding.walletAddress === 'string' && a.cryptoHolding.walletAddress.trim()
+                  ? a.cryptoHolding.walletAddress.trim()
+                  : undefined,
+              walletNetwork: normalizeCryptoWalletNetwork(a.cryptoHolding.walletNetwork, a.cryptoHolding.symbol) ?? undefined,
             }
           : undefined,
         isEligibleEmergencyFund: a.isEligibleEmergencyFund ?? isLivretType(a.productType),
@@ -535,6 +570,160 @@ const fetchJson = async <T>(url: string): Promise<T | null> => {
     return (await response.json()) as T
   } catch {
     return null
+  }
+}
+
+const normalizeCryptoWalletNetwork = (
+  value?: string,
+  fallbackSymbol?: string,
+): 'bitcoin' | 'ethereum' | null => {
+  const normalizedValue = (value ?? '').trim().toLowerCase()
+  if (normalizedValue === 'bitcoin' || normalizedValue === 'btc') return 'bitcoin'
+  if (normalizedValue === 'ethereum' || normalizedValue === 'eth') return 'ethereum'
+
+  const normalizedSymbol = (fallbackSymbol ?? '').trim().toLowerCase()
+  if (normalizedSymbol === 'btc') return 'bitcoin'
+  if (normalizedSymbol === 'eth') return 'ethereum'
+
+  return null
+}
+
+const isLikelyBitcoinAddress = (address: string) => {
+  const value = address.trim()
+
+  // Legacy Base58 (P2PKH/P2SH)
+  const base58 = /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(value)
+
+  // Bech32 / Bech32m (segwit + taproot), lowercase or uppercase (no mixed case)
+  const bech32Lower = /^bc1[ac-hj-np-z02-9]{11,71}$/.test(value)
+  const bech32Upper = /^BC1[AC-HJ-NP-Z02-9]{11,71}$/.test(value)
+
+  return base58 || bech32Lower || bech32Upper
+}
+const isLikelyEthereumAddress = (address: string) => /^0x[a-fA-F0-9]{40}$/.test(address)
+
+const fetchBitcoinAddressQuantity = async (address: string): Promise<number | null> => {
+  const payload = await fetchJson<any>(`https://api.blockchair.com/bitcoin/dashboards/address/${encodeURIComponent(address)}`)
+  const byExactKey = readNumericValue(payload?.data?.[address]?.address?.balance)
+  const byLowerKey = readNumericValue(payload?.data?.[address.toLowerCase()]?.address?.balance)
+  const firstEntry =
+    payload?.data && typeof payload.data === 'object'
+      ? (Object.values(payload.data as Record<string, unknown>)[0] as any)
+      : null
+  const byFirstEntry = readNumericValue(firstEntry?.address?.balance)
+  const satoshis = byExactKey ?? byLowerKey ?? byFirstEntry
+
+  if (satoshis !== null && satoshis >= 0) {
+    return satoshis / 100_000_000
+  }
+
+  // Fallback providers when Blockchair throttles or changes payload shape.
+  const fallbackUrls = [
+    `https://mempool.space/api/address/${encodeURIComponent(address)}`,
+    `https://blockstream.info/api/address/${encodeURIComponent(address)}`,
+  ]
+
+  for (const url of fallbackUrls) {
+    const fallbackPayload = await fetchJson<any>(url)
+    const funded = readNumericValue(fallbackPayload?.chain_stats?.funded_txo_sum)
+    const spent = readNumericValue(fallbackPayload?.chain_stats?.spent_txo_sum)
+    if (funded !== null && spent !== null && funded >= 0 && spent >= 0) {
+      const computed = funded - spent
+      if (computed >= 0) {
+        return computed / 100_000_000
+      }
+    }
+  }
+
+  return null
+}
+
+const fetchEthereumAddressQuantity = async (address: string): Promise<number | null> => {
+  const payload = await fetchJson<any>(`https://api.blockchair.com/ethereum/dashboards/address/${encodeURIComponent(address)}`)
+  const byExactKey = readNumericValue(payload?.data?.[address]?.address?.balance)
+  const byLowerKey = readNumericValue(payload?.data?.[address.toLowerCase()]?.address?.balance)
+  const firstEntry =
+    payload?.data && typeof payload.data === 'object'
+      ? (Object.values(payload.data as Record<string, unknown>)[0] as any)
+      : null
+  const byFirstEntry = readNumericValue(firstEntry?.address?.balance)
+  const weiFromBlockchair = byExactKey ?? byLowerKey ?? byFirstEntry
+
+  if (weiFromBlockchair !== null && weiFromBlockchair >= 0) {
+    return weiFromBlockchair / 1_000_000_000_000_000_000
+  }
+
+  // Fallback providers when Blockchair throttles or changes payload shape.
+  const rpcEndpoints = [
+    'https://eth.llamarpc.com',
+    'https://ethereum-rpc.publicnode.com',
+    'https://1rpc.io/eth',
+    'https://cloudflare-eth.com',
+  ]
+
+  for (const endpoint of rpcEndpoints) {
+    try {
+      const rpcResponse = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_getBalance',
+          params: [address, 'latest'],
+          id: 1,
+        }),
+      })
+
+      if (!rpcResponse.ok) continue
+
+      const rpcPayload = (await rpcResponse.json()) as { result?: string; error?: unknown }
+      const hexWei = typeof rpcPayload.result === 'string' ? rpcPayload.result : ''
+      if (!/^0x[0-9a-fA-F]+$/.test(hexWei)) continue
+
+      const wei = Number(BigInt(hexWei))
+      if (!Number.isFinite(wei) || wei < 0) continue
+
+      return wei / 1_000_000_000_000_000_000
+    } catch {
+      // Ignore provider-level errors and try the next RPC.
+      continue
+    }
+  }
+
+  return null
+}
+
+const resolveWalletHoldingFromAddress = async (
+  network: 'bitcoin' | 'ethereum',
+  address: string,
+) => {
+  if (network === 'bitcoin' && !isLikelyBitcoinAddress(address)) {
+    return { error: 'Format d\'adresse Bitcoin invalide.' as const }
+  }
+
+  if (network === 'ethereum' && !isLikelyEthereumAddress(address)) {
+    return { error: 'Format d\'adresse Ethereum invalide.' as const }
+  }
+
+  const quantity =
+    network === 'bitcoin'
+      ? await fetchBitcoinAddressQuantity(address)
+      : await fetchEthereumAddressQuantity(address)
+
+  if (quantity === null) {
+    return { error: 'Impossible de récupérer le solde pour cette adresse.' as const }
+  }
+
+  const defaultMeta =
+    network === 'bitcoin'
+      ? { symbol: 'BTC', name: 'Bitcoin', coinId: 'bitcoin' }
+      : { symbol: 'ETH', name: 'Ethereum', coinId: 'ethereum' }
+
+  return {
+    quantity,
+    defaultMeta,
   }
 }
 
@@ -1229,10 +1418,25 @@ const fetchYahooSectorBucketsForSymbol = async (symbol: string): Promise<Diversi
 const buildAutoSectorBuckets = async (
   positions: LiveInvestmentPosition[],
   totalCurrentValue: number,
+  marketSymbolOverrides?: Record<string, MarketSymbolOverride>,
 ): Promise<DiversificationBucket[]> => {
   if (positions.length === 0 || totalCurrentValue <= 0) return []
 
   const aggregate = new Map<string, number>()
+
+  const toYahooSymbolCandidates = (rawSymbol: string): string[] => {
+    const normalized = rawSymbol.toUpperCase().trim()
+    if (!normalized) return []
+
+    const candidates = [normalized]
+
+    // Boursorama often uses synthetic symbols like 1rTPSP5; map them to Yahoo Paris tickers (PSP5.PA).
+    if (/^1R[A-Z][A-Z0-9]{3,6}$/.test(normalized)) {
+      candidates.push(`${normalized.slice(3)}.PA`)
+    }
+
+    return [...new Set(candidates)]
+  }
 
   for (const position of positions) {
     if (position.currentValue <= 0) continue
@@ -1241,12 +1445,38 @@ const buildAutoSectorBuckets = async (
     let hasYahooBreakdown = false
 
     if (symbol) {
-      const yahooBuckets = await fetchYahooSectorBucketsForSymbol(symbol)
-      if (yahooBuckets.length > 0) {
-        hasYahooBreakdown = true
-        for (const bucket of yahooBuckets) {
-          const weightedValue = position.currentValue * bucket.share
-          aggregate.set(bucket.label, (aggregate.get(bucket.label) ?? 0) + weightedValue)
+      const symbolCandidates = toYahooSymbolCandidates(symbol)
+      for (const candidate of symbolCandidates) {
+        const yahooBuckets = await fetchYahooSectorBucketsForSymbol(candidate)
+        if (yahooBuckets.length > 0) {
+          hasYahooBreakdown = true
+          for (const bucket of yahooBuckets) {
+            const weightedValue = position.currentValue * bucket.share
+            aggregate.set(bucket.label, (aggregate.get(bucket.label) ?? 0) + weightedValue)
+          }
+          break
+        }
+      }
+    }
+
+    // For Bourso raw symbols (e.g. 1rTxxxx) or unknown tickers, resolve a Yahoo symbol from name/ISIN.
+    if (!hasYahooBreakdown) {
+      const resolved = await resolveYahooSymbol(
+        {
+          isin: position.isin,
+          name: position.investmentName,
+        },
+        marketSymbolOverrides,
+      )
+
+      if (resolved?.symbol) {
+        const yahooBuckets = await fetchYahooSectorBucketsForSymbol(resolved.symbol)
+        if (yahooBuckets.length > 0) {
+          hasYahooBreakdown = true
+          for (const bucket of yahooBuckets) {
+            const weightedValue = position.currentValue * bucket.share
+            aggregate.set(bucket.label, (aggregate.get(bucket.label) ?? 0) + weightedValue)
+          }
         }
       }
     }
@@ -1433,26 +1663,53 @@ const buildLiveInvestmentSnapshot = async (
     }
 
     const activeImport = getActiveImportsSortedByTemporalEndDate(account, 'positions')[0]?.imp
-    if (!activeImport) continue
+    const accountPositions = activeImport
+      ? parsePositionsCsv(activeImport.csvText)
+      : (account.boursoPositions ?? []).map((position) => ({
+          symbol: position.symbol,
+          name: position.name,
+          isin: position.isin ?? '',
+          quantity: position.quantity,
+          buyingPrice: position.buyingPrice,
+          lastPrice: position.lastPrice,
+          intradayVariation: 0,
+          currentValue: position.currentValue,
+          amountVariation: position.amountVariation ?? 0,
+          variation: position.variation ?? 0,
+        }))
 
-    const accountPositions = parsePositionsCsv(activeImport.csvText)
+    if (accountPositions.length === 0) continue
+
     for (const position of accountPositions) {
-      const marketData = await fetchYahooMarketData(
-        { isin: position.isin || undefined, name: position.name },
-        period,
-        state.marketSymbolOverrides,
-      )
+      // Check if this is a Bourso position (has raw Bourso symbol like "1rTPSP5")
+      const isBoursoPosition = position.symbol && /^[0-9a-zA-Z]{7,8}$/.test(position.symbol)
+      
+      // Fix scaling issue: Bourso positions may have prices 100x too small due to decimals calculation
+      const needsPriceScaling = isBoursoPosition && position.lastPrice < 1 && position.buyingPrice < 1
+      const scaledLastPrice = needsPriceScaling ? position.lastPrice * 100 : position.lastPrice
+      const scaledBuyingPrice = needsPriceScaling ? position.buyingPrice * 100 : position.buyingPrice
+      const scaledCurrentValue = needsPriceScaling ? position.currentValue * 100 : position.currentValue
+      
+      let marketData: Awaited<ReturnType<typeof fetchYahooMarketData>> | null = null
+      if (!isBoursoPosition) {
+        // Only fetch Yahoo data for CSV positions, not for Bourso API positions
+        marketData = await fetchYahooMarketData(
+          { isin: position.isin || undefined, name: position.name },
+          period,
+          state.marketSymbolOverrides,
+        )
+      }
 
       positions.push(
         buildLivePosition({
           account,
           investmentName: marketData?.name ?? position.name,
           quantity: position.quantity,
-          buyingPrice: position.buyingPrice,
-          fallbackCurrentPrice: position.lastPrice,
+          buyingPrice: scaledBuyingPrice,
+          fallbackCurrentPrice: scaledLastPrice,
           period,
-          source: marketData?.currentPrice ? 'live' : 'csv',
-          symbol: marketData?.symbol,
+          source: marketData?.currentPrice ? 'live' : (isBoursoPosition ? 'live' : 'csv'),
+          symbol: marketData?.symbol || position.symbol,
           isin: position.isin || undefined,
           liveCurrentPrice: marketData?.currentPrice,
           liveReferencePrice: marketData?.referencePrice,
@@ -3319,6 +3576,7 @@ const serializeAccount = (
       isActive: imp.isActive,
       importKind: detectAccountImportKind(imp.csvText),
     })),
+    boursoPositions: account.boursoPositions,
   }
 }
 
@@ -3571,6 +3829,9 @@ app.patch('/api/imports/:id', (request, response) => {
 })
 
 app.post('/api/import', (request, response) => {
+  response.status(410).json({ error: 'Import CSV désactivé: utilisez la synchronisation Bourso.' })
+  return
+
   const body = request.body as {
     fileName?: string
     csvText?: string
@@ -4250,6 +4511,113 @@ app.patch('/api/accounts/:id', (request, response) => {
   response.json({ account, patrimony })
 })
 
+app.post('/api/crypto/address/resolve', async (request, response) => {
+  const body = request.body as {
+    address?: string
+    network?: string
+  }
+
+  const address = body.address?.trim() ?? ''
+  if (!address) {
+    response.status(400).json({ error: 'Adresse crypto requise.' })
+    return
+  }
+
+  const network = normalizeCryptoWalletNetwork(body.network)
+  if (!network) {
+    response.status(400).json({ error: 'Réseau non supporté. Utilisez BTC ou ETH.' })
+    return
+  }
+
+  const resolved = await resolveWalletHoldingFromAddress(network, address)
+  if ('error' in resolved) {
+    response.status(400).json({ error: resolved.error })
+    return
+  }
+
+  response.json({
+    address,
+    network,
+    quantity: resolved.quantity,
+    coinId: resolved.defaultMeta.coinId,
+    symbol: resolved.defaultMeta.symbol,
+    name: resolved.defaultMeta.name,
+  })
+})
+
+app.post('/api/accounts/:id/crypto/address-import', async (request, response) => {
+  const { id } = request.params
+  const body = request.body as {
+    address?: string
+    network?: string
+    averageBuyPrice?: number
+  }
+
+  const address = body.address?.trim() ?? ''
+  if (!address) {
+    response.status(400).json({ error: 'Adresse crypto requise.' })
+    return
+  }
+
+  const state = readStore()
+  const account = state.accounts.find((a) => a.id === id)
+  if (!account) {
+    response.status(404).json({ error: 'Compte non trouvé' })
+    return
+  }
+
+  if (account.productType !== 'crypto') {
+    response.status(400).json({ error: 'Cet import d\'adresse est réservé aux comptes crypto.' })
+    return
+  }
+
+  const existingHolding = account.cryptoHolding ?? {}
+  const network = normalizeCryptoWalletNetwork(body.network, existingHolding.symbol)
+  if (!network) {
+    response.status(400).json({ error: 'Réseau non supporté. Utilisez BTC ou ETH.' })
+    return
+  }
+
+  const resolved = await resolveWalletHoldingFromAddress(network, address)
+  if ('error' in resolved) {
+    response.status(400).json({ error: resolved.error })
+    return
+  }
+
+  const { quantity, defaultMeta } = resolved
+
+  const averageBuyPrice =
+    typeof body.averageBuyPrice === 'number' && Number.isFinite(body.averageBuyPrice) && body.averageBuyPrice > 0
+      ? body.averageBuyPrice
+      : existingHolding.averageBuyPrice
+
+  account.cryptoHolding = {
+    ...existingHolding,
+    coinId: existingHolding.coinId ?? defaultMeta.coinId,
+    symbol: existingHolding.symbol ?? defaultMeta.symbol,
+    name: existingHolding.name ?? defaultMeta.name,
+    quantity,
+    averageBuyPrice,
+    walletAddress: address,
+    walletNetwork: network,
+  }
+
+  writeStore(state)
+
+  const analysis = buildAnalysis(state)
+  const patrimony = buildPatrimony(state, analysis)
+
+  response.json({
+    account: serializeAccount(account),
+    patrimony,
+    imported: {
+      address,
+      network,
+      quantity,
+    },
+  })
+})
+
 // Delete account
 app.delete('/api/accounts/:id', (request, response) => {
   const { id } = request.params
@@ -4275,6 +4643,11 @@ app.post('/api/accounts/:id/imports', (request, response) => {
   const account = state.accounts.find((a) => a.id === id)
   if (!account) {
     response.status(404).json({ error: 'Compte non trouvé' })
+    return
+  }
+
+  if (account.id.startsWith('bourso-')) {
+    response.status(410).json({ error: 'Import CSV indisponible pour un compte synchronisé Bourso.' })
     return
   }
 
@@ -4347,6 +4720,11 @@ app.delete('/api/accounts/:accountId/imports/:importId', (request, response) => 
     return
   }
 
+  if (account.id.startsWith('bourso-')) {
+    response.status(410).json({ error: 'Import CSV indisponible pour un compte synchronisé Bourso.' })
+    return
+  }
+
   const before = account.csvImports.length
   account.csvImports = account.csvImports.filter((imp) => imp.id !== importId)
   if (account.csvImports.length === before) {
@@ -4371,6 +4749,11 @@ app.patch('/api/accounts/:accountId/imports/:importId', (request, response) => {
   const account = state.accounts.find((a) => a.id === accountId)
   if (!account) {
     response.status(404).json({ error: 'Compte non trouvé' })
+    return
+  }
+
+  if (account.id.startsWith('bourso-')) {
+    response.status(410).json({ error: 'Import CSV indisponible pour un compte synchronisé Bourso.' })
     return
   }
 
@@ -4529,7 +4912,11 @@ app.get('/api/health-score', async (_request, response) => {
   const internalDiversificationTargetScore = 85
 
   const totalMarketValue = marketPositionsForDetail.reduce((sum, position) => sum + position.currentValue, 0)
-  const enrichedSectorBuckets = await buildAutoSectorBuckets(marketPositionsForDetail, totalMarketValue)
+  const enrichedSectorBuckets = await buildAutoSectorBuckets(
+    marketPositionsForDetail,
+    totalMarketValue,
+    state.marketSymbolOverrides,
+  )
   const effectiveGeoBuckets = diversificationAnalysis?.byGeography ?? []
   const effectiveSectorBuckets = enrichedSectorBuckets.length > 0 ? enrichedSectorBuckets : (diversificationAnalysis?.bySector ?? [])
   const geoCount = effectiveGeoBuckets.length
@@ -4822,6 +5209,7 @@ app.get('/api/timeline', (_request, response) => {
 })
 
 registerCrudRoutes(app)
+app.use('/api/bourso', boursoRouter)
 app.use(notFoundHandler)
 app.use(errorHandler)
 

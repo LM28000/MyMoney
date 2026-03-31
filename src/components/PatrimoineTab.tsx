@@ -4,6 +4,7 @@ import type { RealEstate, Vehicle, Debt } from '../types'
 import type { Account } from './AccountsTab'
 import { api } from '../lib/api'
 const fmt = (v: number) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v)
+const fmtPrice = (v: number) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(v)
 const fmtSigned = (v: number) => `${v >= 0 ? '+' : ''}${fmt(v)}`
 const fmtSignedPercent = (v: number | null) => (v === null ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`)
 
@@ -626,7 +627,7 @@ export default function PatrimoineTab({ financialAccounts, backendStatus }: Prop
                             )}
                           </div>
                           <div className="position-quantity">{position.quantity.toFixed(4)}</div>
-                          <div className="position-price">{fmt(position.currentPrice)}</div>
+                          <div className="position-price">{fmtPrice(position.currentPrice)}</div>
                           <div className="position-value">
                             {fmt(position.currentValue)}
                             <span className="position-subtext position-source">{position.source}</span>

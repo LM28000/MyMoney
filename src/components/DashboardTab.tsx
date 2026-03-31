@@ -170,8 +170,8 @@ export default function DashboardTab({
   history,
   analysis,
   backendStatus,
-  suggestions,
-  emergencyFundTargetMonths,
+  // suggestions,
+  // emergencyFundTargetMonths,
   onSuggestionsRefresh,
   onNavigate,
 }: Props) {
@@ -306,7 +306,7 @@ export default function DashboardTab({
 
   const liveMarketTotal = liveInvestments?.totalCurrentValue ?? investedAssets
   const assetTotal = patrimony.bankCash + liveMarketTotal + patrimony.livretTotal + patrimony.externalPatrimonyTotal
-  const emergencyMissing = Math.max(0, patrimony.emergencyFund.target - patrimony.emergencyFund.current)
+  // const emergencyMissing = Math.max(0, patrimony.emergencyFund.target - patrimony.emergencyFund.current)
 
   const lastHistoryPoint = history[history.length - 1]
   const baselineHistoryPoint = history[Math.max(0, history.length - 31)]
