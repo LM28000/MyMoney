@@ -476,8 +476,8 @@ export default function DashboardTab({
           <h3>Votre poste de pilotage financier</h3>
           <div className="command-hero-value">{formatCurrency(assetTotal)}</div>
           <p className="command-hero-copy">
-            {netWorthDelta >= 0 ? 'Progression' : 'Retrait'} de {formatSignedCurrency(netWorthDelta)} sur la période récente,
-            avec {formatCurrency(investedAssets)} investis et {formatCurrency(patrimony.bankCash + patrimony.livretTotal)} mobilisables rapidement.
+            {/* {netWorthDelta >= 0 ? 'Progression' : 'Retrait'} de {formatSignedCurrency(netWorthDelta)} sur la période récente,
+            avec {formatCurrency(investedAssets)} investis et {formatCurrency(patrimony.bankCash + patrimony.livretTotal)} mobilisables rapidement. */}
           </p>
           <div className="command-chip-row">
             <span className="command-chip">Épargne de précaution {patrimony.emergencyFund.months.toFixed(1)} mois</span>

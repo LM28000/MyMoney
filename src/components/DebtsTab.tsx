@@ -14,50 +14,80 @@ const DEBT_TYPES: { value: DebtType; label: string; icon: string }[] = [
   { value: 'other', label: 'Autre', icon: '📄' },
 ]
 
+const getDuration = (start: string, end: string) => {
+  const d1 = new Date(start)
+  const d2 = new Date(end)
+  return (d2.getFullYear() - d1.getFullYear()) * 12 + (d2.getMonth() - d1.getMonth())
+}
+
 function computeAmortization(debt: Debt): AmortizationRow[] {
   const rows: AmortizationRow[] = []
   const mr = debt.interestRate / 100 / 12
+  const ir = (debt.insuranceRate || 0) / 100 / 12
+  const insurancePayment = debt.originalAmount * ir
+
   let balance = debt.balance
   const start = new Date(debt.startDate)
-  const end = new Date(debt.endDate)
-  const totalMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
-  const n = Math.max(1, totalMonths)
-
-  const payment = mr === 0 ? balance / n : (debt.balance * mr * Math.pow(1 + mr, n)) / (Math.pow(1 + mr, n) - 1)
-  const monthly = debt.monthlyPayment || payment
+  const totalMonths = Math.max(1, getDuration(debt.startDate, debt.endDate))
 
   const today = new Date()
+  const diffSinceStart = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth())
+  
+  const defMonths = debt.deferredMonths || 0
+  const defType = debt.deferredType || 'none'
+  let remainingDeferred = Math.max(0, defMonths - Math.max(0, diffSinceStart))
+  
+  const remainingTerm = Math.max(1, totalMonths - defMonths)
+  let activeMonthlyPayment = debt.monthlyPayment || (mr === 0 ? balance / remainingTerm : (balance * mr * Math.pow(1 + mr, remainingTerm)) / (Math.pow(1 + mr, remainingTerm) - 1))
+
   let month = 0
   const cursor = new Date(today)
 
   while (balance > 0.01 && month < 360) {
     month++
     const interest = balance * mr
-    const principal = Math.min(Math.max(0, monthly - interest), balance)
-    balance = Math.max(0, balance - principal)
+    let principal = 0
+    let currentPayment = 0
+    
+    if (remainingDeferred > 0) {
+      if (defType === 'partial') {
+        currentPayment = interest + insurancePayment
+        principal = 0
+      } else if (defType === 'total') {
+        currentPayment = insurancePayment
+        principal = 0
+        balance += interest
+      }
+      remainingDeferred--
+      if (remainingDeferred === 0 && defType === 'total') {
+        activeMonthlyPayment = mr === 0 ? balance / remainingTerm : (balance * mr * Math.pow(1 + mr, remainingTerm)) / (Math.pow(1 + mr, remainingTerm) - 1)
+      }
+    } else {
+      principal = Math.min(Math.max(0, activeMonthlyPayment - interest), balance)
+      currentPayment = principal + interest + insurancePayment
+      balance = Math.max(0, balance - principal)
+    }
+
     const d = new Date(cursor)
     d.setMonth(d.getMonth() + month)
-    rows.push({
-      month,
-      date: d.toISOString().slice(0, 7),
-      payment: interest + principal,
-      principal,
-      interest,
-      balance,
-    })
+    rows.push({ month, date: d.toISOString().slice(0, 7), payment: currentPayment, principal, interest, insurance: insurancePayment, balance })
     if (rows.length >= 360) break
   }
   return rows
 }
 
-type FormState = Omit<Debt, 'id'> & { id?: string }
+type FormState = Omit<Debt, 'id'> & { id?: string; durationMonths?: number }
 const emptyForm = (): FormState => ({
   name: '',
   type: 'consumer',
   originalAmount: 0,
   balance: 0,
   interestRate: 0,
+  insuranceRate: 0,
+  deferredMonths: 0,
+  deferredType: 'none',
   monthlyPayment: 0,
+  durationMonths: 60,
   startDate: new Date().toISOString().slice(0, 10),
   endDate: new Date(new Date().setFullYear(new Date().getFullYear() + 5)).toISOString().slice(0, 10),
 })
@@ -80,7 +110,17 @@ export default function DebtsTab() {
   useEffect(() => { load() }, [])
 
   const openCreate = () => { setForm(emptyForm()); setEditingId(null); setShowModal(true) }
-  const openEdit = (d: Debt) => { setForm({ ...d }); setEditingId(d.id); setShowModal(true) }
+  const openEdit = (d: Debt) => { 
+    setForm({ 
+      ...d, 
+      durationMonths: getDuration(d.startDate, d.endDate),
+      insuranceRate: d.insuranceRate || 0,
+      deferredMonths: d.deferredMonths || 0,
+      deferredType: d.deferredType || 'none'
+    })
+    setEditingId(d.id)
+    setShowModal(true) 
+  }
   const closeModal = () => { setShowModal(false); setEditingId(null) }
 
   const save = async () => {
@@ -103,10 +143,13 @@ export default function DebtsTab() {
   }
 
   const totalBalance = debts.reduce((s, d) => s + d.balance, 0)
-  const totalMonthly = debts.reduce((s, d) => s + d.monthlyPayment, 0)
-  const totalInterestRemaining = debts.reduce((d_acc, d) => {
+  const totalMonthly = debts.reduce((s, d) => {
     const rows = computeAmortization(d)
-    return d_acc + rows.reduce((s, r) => s + r.interest, 0)
+    return s + (rows.length > 0 ? rows[0].payment : 0)
+  }, 0)
+  const totalCostRemaining = debts.reduce((d_acc, d) => {
+    const rows = computeAmortization(d)
+    return d_acc + rows.reduce((s, r) => s + r.interest + (r.insurance || 0), 0)
   }, 0)
 
   const setF = (k: keyof FormState, v: any) => setForm(prev => ({ ...prev, [k]: v }))
@@ -128,7 +171,7 @@ export default function DebtsTab() {
         {[
           { label: 'Capital Restant Dû', value: fmt(totalBalance), color: 'var(--danger)', icon: '💳' },
           { label: 'Mensualités Totales', value: `${fmt(totalMonthly)}/mois`, color: 'var(--warning)', icon: '📅' },
-          { label: 'Intérêts Restants', value: fmt(totalInterestRemaining), color: 'var(--accent-purple)', icon: '📈' },
+          { label: 'Coût Restant (Int. + Assur.)', value: fmt(totalCostRemaining), color: 'var(--accent-purple)', icon: '📈' },
         ].map(kpi => (
           <div key={kpi.label} className="glass-panel" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
             <span style={{ fontSize: '2rem' }}>{kpi.icon}</span>
@@ -176,10 +219,10 @@ export default function DebtsTab() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <div style={{ textAlign: 'right', marginRight: '8px' }}>
                         <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--danger)' }}>{fmt(d.balance)}</div>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{fmt(d.monthlyPayment)}/mois</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{amortRows.length > 0 ? fmt(amortRows[0].payment) : fmt(d.monthlyPayment)}/mois</div>
                       </div>
-                      <button onClick={() => openEdit(d)} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', cursor: 'pointer', color: 'var(--text-secondary)' }}><Edit2 size={15} /></button>
-                      <button onClick={() => remove(d.id)} style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '6px', cursor: 'pointer', color: 'var(--danger)' }}><Trash2 size={15} /></button>
+                      {!d.isApi && <button onClick={() => openEdit(d)} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', cursor: 'pointer', color: 'var(--text-secondary)' }}><Edit2 size={15} /></button>}
+                      {!d.isApi && <button onClick={() => remove(d.id)} style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '6px', cursor: 'pointer', color: 'var(--danger)' }}><Trash2 size={15} /></button>}
                       <button onClick={() => setExpandedId(isExpanded ? null : d.id)} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                         {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                       </button>
@@ -207,7 +250,7 @@ export default function DebtsTab() {
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.83rem' }}>
                         <thead>
                           <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
-                            {['Mois', 'Date', 'Mensualité', 'Capital', 'Intérêts', 'Capital restant'].map(h => (
+                            {['Mois', 'Date', 'Mensualité', 'Capital', 'Intérêts', 'Assurance', 'Capital restant'].map(h => (
                               <th key={h} style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 600, borderBottom: '1px solid var(--border-color)' }}>{h}</th>
                             ))}
                           </tr>
@@ -220,6 +263,7 @@ export default function DebtsTab() {
                               <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 600 }}>{fmt(r.payment)}</td>
                               <td style={{ padding: '7px 12px', textAlign: 'right', color: 'var(--accent-blue)' }}>{fmt(r.principal)}</td>
                               <td style={{ padding: '7px 12px', textAlign: 'right', color: 'var(--accent-coral)' }}>{fmt(r.interest)}</td>
+                              <td style={{ padding: '7px 12px', textAlign: 'right', color: 'var(--text-secondary)' }}>{fmt(r.insurance)}</td>
                               <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 600 }}>{fmt(r.balance)}</td>
                             </tr>
                           ))}
@@ -270,16 +314,48 @@ export default function DebtsTab() {
                   <input type="number" step="0.01" value={form.interestRate || ''} onChange={e => setF('interestRate', Number(e.target.value))} style={inputStyle} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                  Mensualité (€)
-                  <input type="number" value={form.monthlyPayment || ''} onChange={e => setF('monthlyPayment', Number(e.target.value))} style={inputStyle} />
+                  Taux assurance (%)
+                  <input type="number" step="0.01" value={form.insuranceRate || ''} onChange={e => setF('insuranceRate', Number(e.target.value))} style={inputStyle} />
                 </label>
+                
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                  Mensualité hors assurance (€)
+                  <input type="number" value={form.monthlyPayment || ''} onChange={e => setF('monthlyPayment', Number(e.target.value))} placeholder="Calcul auto si 0" style={inputStyle} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                  Durée totale (mois)
+                  <input type="number" value={form.durationMonths || ''} onChange={e => {
+                    const dur = Number(e.target.value)
+                    const end = new Date(form.startDate)
+                    end.setMonth(end.getMonth() + dur)
+                    setForm(prev => ({ ...prev, durationMonths: dur, endDate: end.toISOString().slice(0, 10) }))
+                  }} style={inputStyle} />
+                </label>
+                
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
                   Date de début
-                  <input type="date" value={form.startDate} onChange={e => setF('startDate', e.target.value)} style={inputStyle} />
+                  <input type="date" value={form.startDate} onChange={e => {
+                    const val = e.target.value
+                    const end = new Date(val)
+                    end.setMonth(end.getMonth() + (form.durationMonths || 60))
+                    setForm(prev => ({ ...prev, startDate: val, endDate: end.toISOString().slice(0, 10) }))
+                  }} style={inputStyle} />
                 </label>
+
+                <div style={{ padding: '0px', gap: '12px', display: 'flex', flexDirection: 'column' }}></div>
+                
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                  Date de fin
-                  <input type="date" value={form.endDate} onChange={e => setF('endDate', e.target.value)} style={inputStyle} />
+                  Type de différé
+                  <select value={form.deferredType} onChange={e => setF('deferredType', e.target.value)} style={inputStyle}>
+                    <option value="none">Aucun différé</option>
+                    <option value="partial">Différé partiel (intérêts seuls)</option>
+                    <option value="total">Différé total (franchise)</option>
+                  </select>
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                  Mois de différé
+                  <input type="number" value={form.deferredMonths || ''} onChange={e => setF('deferredMonths', Number(e.target.value))} style={inputStyle} />
                 </label>
               </div>
 

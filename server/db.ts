@@ -98,6 +98,10 @@ export const initDB = () => {
       description TEXT
     );
   `)
+
+  try { db.exec("ALTER TABLE debts ADD COLUMN insurance_rate REAL DEFAULT 0") } catch (e) {}
+  try { db.exec("ALTER TABLE debts ADD COLUMN deferred_months INTEGER DEFAULT 0") } catch (e) {}
+  try { db.exec("ALTER TABLE debts ADD COLUMN deferred_type TEXT DEFAULT 'none'") } catch (e) {}
 }
 
 // ─── Debts ─────────────────────────────────────────────────────────────────
@@ -106,18 +110,19 @@ export const getAllDebts = () => {
   return rows.map(r => ({
     id: r.id, name: r.name, type: r.type, originalAmount: r.original_amount,
     balance: r.balance, interestRate: r.interest_rate, monthlyPayment: r.monthly_payment,
-    startDate: r.start_date, endDate: r.end_date, linkedAssetId: r.linked_asset_id ?? undefined
+    startDate: r.start_date, endDate: r.end_date, linkedAssetId: r.linked_asset_id ?? undefined,
+    insuranceRate: r.insurance_rate ?? 0, deferredMonths: r.deferred_months ?? 0, deferredType: r.deferred_type ?? 'none'
   }))
 }
 
 export const insertDebt = (d: any) => {
-  db.prepare(`INSERT INTO debts (id,name,type,original_amount,balance,interest_rate,monthly_payment,start_date,end_date,linked_asset_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(d.id,d.name,d.type,d.originalAmount,d.balance,d.interestRate,d.monthlyPayment,d.startDate,d.endDate,d.linkedAssetId??null)
+  db.prepare(`INSERT INTO debts (id,name,type,original_amount,balance,interest_rate,monthly_payment,start_date,end_date,linked_asset_id,insurance_rate,deferred_months,deferred_type)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(d.id,d.name,d.type,d.originalAmount,d.balance,d.interestRate,d.monthlyPayment,d.startDate,d.endDate,d.linkedAssetId??null,d.insuranceRate??0,d.deferredMonths??0,d.deferredType??'none')
 }
 
 export const updateDebt = (d: any) => {
-  db.prepare(`UPDATE debts SET name=?,type=?,original_amount=?,balance=?,interest_rate=?,monthly_payment=?,start_date=?,end_date=?,linked_asset_id=? WHERE id=?`)
-    .run(d.name,d.type,d.originalAmount,d.balance,d.interestRate,d.monthlyPayment,d.startDate,d.endDate,d.linkedAssetId??null,d.id)
+  db.prepare(`UPDATE debts SET name=?,type=?,original_amount=?,balance=?,interest_rate=?,monthly_payment=?,start_date=?,end_date=?,linked_asset_id=?,insurance_rate=?,deferred_months=?,deferred_type=? WHERE id=?`)
+    .run(d.name,d.type,d.originalAmount,d.balance,d.interestRate,d.monthlyPayment,d.startDate,d.endDate,d.linkedAssetId??null,d.insuranceRate??0,d.deferredMonths??0,d.deferredType??'none',d.id)
 }
 
 export const deleteDebt = (id: string) => db.prepare('DELETE FROM debts WHERE id=?').run(id)

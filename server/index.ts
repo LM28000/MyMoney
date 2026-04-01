@@ -199,6 +199,7 @@ type StoredInvestmentImport = {
 }
 
 type InvestmentPosition = {
+  symbol?: string
   name: string
   isin: string
   quantity: number

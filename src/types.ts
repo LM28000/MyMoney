@@ -15,6 +15,10 @@ export type Debt = {
   startDate: string         // ISO date
   endDate: string           // ISO date
   linkedAssetId?: string    // real_estate.id
+  isApi?: boolean           // whether it was synced via API
+  insuranceRate?: number    // e.g. 0.36 -> 0.36%
+  deferredMonths?: number   // e.g. 24
+  deferredType?: 'none' | 'partial' | 'total'
 }
 
 export type AmortizationRow = {
@@ -23,6 +27,7 @@ export type AmortizationRow = {
   payment: number
   principal: number
   interest: number
+  insurance: number
   balance: number
 }
 

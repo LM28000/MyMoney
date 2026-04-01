@@ -212,10 +212,9 @@ router.post('/accounts/sync-replace', async (req, res) => {
     }
 
     const state = (readStoreFromDB() ?? { accounts: [], imports: [], investmentImports: [] }) as PersistedState
+    const manualAccounts = (state.accounts || []).filter(a => !a.id.startsWith('bourso-'))
     const replacedAccounts = accounts.map(account => toPersistedAccount(account, positionsByAccountId.get(account.id)))
-    state.accounts = replacedAccounts
-    state.imports = []
-    state.investmentImports = []
+    state.accounts = [...manualAccounts, ...replacedAccounts]
     writeStoreToDB(state as any)
 
     const action: BoursoAction = {

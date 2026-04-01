@@ -6,6 +6,7 @@ import { formatCurrency } from '../lib/finance'
 import CsvMappingDialog from './CsvMappingDialog'
 import { BoursoTransferModal } from './BoursoTransferModal'
 import { BoursoTradeModal } from './BoursoTradeModal'
+import { BoursoSyncModal } from './BoursoSyncModal'
 import { BoursoActionsWidget } from './BoursoActionsWidget'
 import { ErrorBoundary } from './ErrorBoundary'
 import type { BoursoAccount } from '../types-bourso'
@@ -153,6 +154,7 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
   const [csvMapping, setCsvMapping] = useState<{ accountId: string; fileName: string; csvText: string; productType: ProductType } | null>(null)
   const [showBoursoTransfer, setShowBoursoTransfer] = useState(false)
   const [showBoursoTrade, setShowBoursoTrade] = useState(false)
+  const [showBoursoSync, setShowBoursoSync] = useState(false)
   const [boursoAccounts, setBoursoAccounts] = useState<BoursoAccount[]>([])
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
@@ -447,6 +449,13 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
           <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Gérez vos comptes, exports CSV et paramètres crypto.</p>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            className="btn-primary"
+            onClick={() => setShowBoursoSync(true)}
+            style={{ padding: '10px 18px', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 700, background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' }}
+          >
+            🔄 Sync Comptes
+          </button>
           <button
             className="btn-primary"
             onClick={() => {
@@ -803,6 +812,12 @@ export default function AccountsTab({ accounts, backendStatus, onRefresh }: Prop
         isOpen={showBoursoTrade}
         onClose={() => setShowBoursoTrade(false)}
         accounts={boursoAccounts}
+        onSuccess={onRefresh}
+      />
+
+      <BoursoSyncModal
+        isOpen={showBoursoSync}
+        onClose={() => setShowBoursoSync(false)}
         onSuccess={onRefresh}
       />
     </div>

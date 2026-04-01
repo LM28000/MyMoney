@@ -23,6 +23,7 @@ import {
   updateRealEstate,
   updateVehicle,
   upsertTransactionOverride,
+  readStoreFromDB,
 } from '../db'
 import { validateBody, validateParams, validateQuery } from '../http'
 import {
@@ -42,7 +43,26 @@ import {
 const router = express.Router()
 
 router.get('/debts', (_req, res) => {
-  res.json(getAllDebts())
+  const manualDebts = getAllDebts()
+  const state = readStoreFromDB()
+  const appAccounts = state?.accounts || []
+  
+  const apiDebts = appAccounts
+    .filter((a: any) => a.kind === 'debt' && a.id.startsWith('bourso-'))
+    .map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      type: 'consumer',
+      originalAmount: a.manualBalance ? Math.abs(a.manualBalance) : 0,
+      balance: a.manualBalance ? Math.abs(a.manualBalance) : 0,
+      interestRate: 0,
+      monthlyPayment: 0,
+      startDate: new Date().toISOString().slice(0, 10),
+      endDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().slice(0, 10),
+      isApi: true
+    }))
+
+  res.json([...manualDebts, ...apiDebts])
 })
 
 router.post('/debts', validateBody(debtBodySchema), (req, res) => {
@@ -52,13 +72,19 @@ router.post('/debts', validateBody(debtBodySchema), (req, res) => {
 })
 
 router.put('/debts/:id', validateParams(idParamsSchema), validateBody(debtBodySchema), (req, res) => {
+  if (String(req.params.id).startsWith('bourso-')) {
+    return res.status(400).json({ error: 'Cannot edit API imported debt' })
+  }
   const debt = { ...req.body, id: req.params.id }
   updateDebt(debt)
   res.json(debt)
 })
 
 router.delete('/debts/:id', validateParams(idParamsSchema), (req, res) => {
-  deleteDebt(req.params.id)
+  if (String(req.params.id).startsWith('bourso-')) {
+    return res.status(400).json({ error: 'Cannot delete API imported debt' })
+  }
+  deleteDebt(req.params.id as string)
   res.json({ ok: true })
 })
 
@@ -79,7 +105,7 @@ router.put('/goals/:id', validateParams(idParamsSchema), validateBody(goalBodySc
 })
 
 router.delete('/goals/:id', validateParams(idParamsSchema), (req, res) => {
-  deleteGoal(req.params.id)
+  deleteGoal(req.params.id as string)
   res.json({ ok: true })
 })
 
@@ -100,7 +126,7 @@ router.put('/real-estate/:id', validateParams(idParamsSchema), validateBody(real
 })
 
 router.delete('/real-estate/:id', validateParams(idParamsSchema), (req, res) => {
-  deleteRealEstate(req.params.id)
+  deleteRealEstate(req.params.id as string)
   res.json({ ok: true })
 })
 
@@ -121,7 +147,7 @@ router.put('/vehicles/:id', validateParams(idParamsSchema), validateBody(vehicle
 })
 
 router.delete('/vehicles/:id', validateParams(idParamsSchema), (req, res) => {
-  deleteVehicle(req.params.id)
+  deleteVehicle(req.params.id as string)
   res.json({ ok: true })
 })
 
@@ -136,7 +162,7 @@ router.post('/transactions/:id/override', validateParams(idParamsSchema), valida
 })
 
 router.delete('/transactions/:id/override', validateParams(idParamsSchema), (req, res) => {
-  deleteTransactionOverride(req.params.id)
+  deleteTransactionOverride(req.params.id as string)
   res.json({ ok: true })
 })
 
@@ -153,7 +179,7 @@ router.post('/tax-events', validateBody(taxEventBodySchema), (req, res) => {
 })
 
 router.delete('/tax-events/:id', validateParams(idParamsSchema), (req, res) => {
-  deleteTaxEvent(req.params.id)
+  deleteTaxEvent(req.params.id as string)
   res.json({ ok: true })
 })
 

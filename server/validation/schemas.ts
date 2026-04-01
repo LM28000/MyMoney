@@ -17,6 +17,9 @@ export const debtBodySchema = z.object({
   startDate: isoDateSchema,
   endDate: isoDateSchema,
   linkedAssetId: optionalString,
+  insuranceRate: z.coerce.number().finite().min(0).max(100).optional(),
+  deferredMonths: z.coerce.number().int().nonnegative().optional(),
+  deferredType: z.enum(['none', 'partial', 'total']).optional(),
 })
 
 export const goalBodySchema = z.object({

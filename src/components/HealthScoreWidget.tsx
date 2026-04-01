@@ -174,29 +174,7 @@ function LiquidityPopup({
           </div>
         )}
 
-        <div className="health-popup-settings-grid">
-          <label className="health-popup-setting-field">
-            Mois d'avance
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={targetMonthsInput}
-              onChange={(e) => setTargetMonthsInput(e.target.value)}
-            />
-          </label>
-        </div>
-        <div className="health-popup-settings-actions">
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => void handleSave()}
-            disabled={saving || backendStatus !== 'online'}
-          >
-            {saving ? 'Enregistrement…' : 'Mettre à jour'}
-          </button>
-          {feedback && <span className="health-popup-feedback">{feedback}</span>}
-        </div>
+        
         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '12px', padding: '10px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
           💡 Les dépenses mensuelles se configurent dans l'onglet Objectifs pour une meilleure organisation.
         </div>
@@ -389,21 +367,21 @@ export default function HealthScoreWidget({ backendStatus }: Props) {
                     style={{ width: `${ax.score}%`, background: axColor }}
                   />
                 </div>
-                <p className="health-axis-desc">{ax.description}</p>
+                {/* <p className="health-axis-desc">{ax.description}</p> */}
                 <div className="health-axis-objective-strip">
                   <span>{ax.objectiveLabel ?? `Objectif ${targetScore}/100`}</span>
                   <strong className={scoreDelta >= 0 ? 'positive' : 'negative'}>
-                    {Math.round(ax.score)}%
+                    {/* {Math.round(ax.score)}% */}
                   </strong>
                 </div>
 
-                {isExpanded && (
+                {/* {isExpanded && (
                   <div className="health-axis-details-inline" onClick={(e) => e.stopPropagation()}>
                     <div className="health-axis-objective-detail-grid">
-                      <div>
+                      {/* <div>
                         <span>Atteinte objectif</span>
                         <strong>{Math.round(ax.score)}%</strong>
-                      </div>
+                      </div> 
                       <div>
                         <span>Seuil objectif</span>
                         <strong>{targetScore}%</strong>
@@ -416,8 +394,8 @@ export default function HealthScoreWidget({ backendStatus }: Props) {
                         <span>Indicateur</span>
                         <strong>{ax.objectiveMetric ?? ax.description}</strong>
                       </div>
-                    </div>
-                    {ax.objectiveBreakdown && ax.objectiveBreakdown.length > 0 && (
+                     </div>
+                    {/* {ax.objectiveBreakdown && ax.objectiveBreakdown.length > 0 && (
                       <div className="health-axis-breakdown-list">
                         {ax.objectiveBreakdown.map((item) => (
                           <div key={item.label} className="health-axis-breakdown-row">
@@ -429,11 +407,11 @@ export default function HealthScoreWidget({ backendStatus }: Props) {
                               {Math.round(item.achievement)}%
                             </strong>
                           </div>
-                        ))}
-                      </div>
+                        ))} 
+                      </div> 
                     )}
-                  </div>
-                )}
+                  </div> 
+                )} */}
 
                 {isExpanded && ax.detail?.kind === 'liquidity' && (
                   <div className="health-axis-details-inline" onClick={(e) => e.stopPropagation()}>
