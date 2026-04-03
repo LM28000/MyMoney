@@ -1,7 +1,7 @@
 # MyMoney
 
 Application locale de pilotage financier personnel (budget + patrimoine), basée sur des imports CSV, une API Express/SQLite et un frontend React.
-
+![alt text](screenshot.png)
 ## Fonctionnalités actuelles
 
 - Import CSV d'opérations et de positions d'investissement.
